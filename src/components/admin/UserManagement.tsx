@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { User } from '../../types';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Button } from '../ui/button';
@@ -31,9 +31,16 @@ import {
   UserX,
   Zap,
   Crown,
-  BookOpen
+  BookOpen,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown
 } from 'lucide-react';
 import { mockUsers } from '../../lib/mockData';
+import axios from 'axios';
 import { formatDate, getInitials } from '../../lib/utils';
 import { UserDetailsDialog } from './UserDetailsDialog';
 import {
@@ -76,6 +83,7 @@ interface UserManagementProps {
 }
 
 export function UserManagement({ user }: UserManagementProps) {
+  const [users, setUsers] = useState<User[]>(mockUsers);
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState<string>('all');
   const [classFilter, setClassFilter] = useState<string>('all');
@@ -86,45 +94,220 @@ export function UserManagement({ user }: UserManagementProps) {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showDetailsDialog, setShowDetailsDialog] = useState(false);
   const [viewMode, setViewMode] = useState<'grid' | 'table'>('table');
-
-  // Filter users based on search and filters
-  const filteredUsers = mockUsers.filter((u) => {
-    const matchesSearch = 
-      u.firstName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      u.lastName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      u.email.toLowerCase().includes(searchQuery.toLowerCase());
-    
-    const matchesRole = roleFilter === 'all' || u.role === roleFilter;
-    const matchesClass = classFilter === 'all' || u.classLevel === classFilter;
-    const matchesStatus = statusFilter === 'all' || 
-      (statusFilter === 'active' && u.isActive !== false) ||
-      (statusFilter === 'inactive' && u.isActive === false);
-
-    return matchesSearch && matchesRole && matchesClass && matchesStatus;
+  
+  // Pagination & Stats State
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [isLoading, setIsLoading] = useState(false);
+  const [sortField, setSortField] = useState('created_at');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [stats, setStats] = useState({
+    total: 0,
+    students: 0,
+    instructors: 0,
+    active: 0,
+    ss1: 0,
+    ss2: 0,
+    ss3: 0
   });
 
-  // Statistics
-  const stats = {
-    total: mockUsers.length,
-    students: mockUsers.filter(u => u.role === 'student').length,
-    instructors: mockUsers.filter(u => u.role === 'instructor').length,
-    admins: mockUsers.filter(u => u.role === 'admin').length,
-    active: mockUsers.filter(u => u.isActive !== false).length,
-    ss1: mockUsers.filter(u => u.classLevel === 'SS1').length,
-    ss2: mockUsers.filter(u => u.classLevel === 'SS2').length,
-    ss3: mockUsers.filter(u => u.classLevel === 'SS3').length,
+  // Form State
+  const [formData, setFormData] = useState({
+    firstName: '',
+    lastName: '',
+    email: '',
+    phone: '',
+    role: 'student',
+    classLevel: 'SS1',
+    password: ''
+  });
+
+  const fetchUsers = async () => {
+    const token = localStorage.getItem('auth_token');
+    if (!token) {
+      setUsers(mockUsers);
+      return;
+    }
+    
+    setIsLoading(true);
+    try {
+      const queryParams = new URLSearchParams({
+        page: currentPage.toString(),
+        search: searchQuery,
+        role: roleFilter,
+        class: classFilter,
+        status: statusFilter,
+        sort_by: sortField,
+        sort_order: sortOrder
+      });
+
+      const res = await axios.get(`http://localhost:8000/api/admin/users?${queryParams.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      const data = res.data.users ? res.data.users.data : res.data; // Handle both structures for safety
+      const apiUsers: User[] = (data || []).map((u: any) => ({
+        id: String(u.id ?? u.id),
+        email: String(u.email ?? ''),
+        firstName: String(u.firstName ?? (u.name?.split(' ')[0] ?? '')),
+        lastName: String(u.lastName ?? (u.name?.split(' ')[1] ?? '')),
+        role: (u.role ?? (u.email === 'admin@tutorplus.com' ? 'admin' : 'student')),
+        avatar: u.avatar ?? undefined,
+        phoneNumber: u.phoneNumber ?? undefined,
+        classLevel: u.classLevel ?? undefined,
+        createdAt: String(u.createdAt ?? u.created_at ?? new Date().toISOString()),
+        isActive: u.isActive ?? true,
+      }));
+      
+      setUsers(apiUsers);
+      
+      if (res.data.stats) {
+        setStats(res.data.stats);
+      }
+      
+      if (res.data.users && res.data.users.last_page) {
+        setTotalPages(res.data.users.last_page);
+      }
+    } catch (error) {
+      console.error('Failed to fetch users', error);
+      // setUsers(mockUsers); // Only fallback if completely broken, or maybe just show error
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const handleToggleStatus = (userId: string) => {
-    toast.success('User status updated successfully');
-    // In real app, make API call to toggle user status
+  useEffect(() => {
+    // Reset to page 1 when filters change
+    setCurrentPage(1);
+  }, [searchQuery, roleFilter, classFilter, statusFilter]);
+
+  useEffect(() => {
+    fetchUsers();
+  }, [currentPage, searchQuery, roleFilter, classFilter, statusFilter, sortField, sortOrder]);
+
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortOrder('asc');
+    }
   };
 
-  const handleDeleteUser = () => {
-    toast.success('User deleted successfully');
-    setShowDeleteDialog(false);
-    setSelectedUser(null);
-    // In real app, make API call to delete user
+  const SortIcon = ({ field }: { field: string }) => {
+    if (sortField !== field) return <ArrowUpDown className="ml-2 h-4 w-4 text-gray-400" />;
+    return sortOrder === 'asc' ? 
+      <ArrowUp className="ml-2 h-4 w-4 text-blue-500" /> : 
+      <ArrowDown className="ml-2 h-4 w-4 text-blue-500" />;
+  };
+
+  const resetForm = () => {
+    setFormData({
+      firstName: '',
+      lastName: '',
+      email: '',
+      phone: '',
+      role: 'student',
+      classLevel: 'SS1',
+      password: ''
+    });
+  };
+
+  // Pre-fill form when editing
+  useEffect(() => {
+    if (showEditDialog && selectedUser) {
+      setFormData({
+        firstName: selectedUser.firstName,
+        lastName: selectedUser.lastName,
+        email: selectedUser.email,
+        phone: selectedUser.phoneNumber || '',
+        role: selectedUser.role,
+        classLevel: selectedUser.classLevel || 'SS1',
+        password: '' // Don't prefill password
+      });
+    }
+  }, [showEditDialog, selectedUser]);
+
+  const handleAddUser = async () => {
+    try {
+      const token = localStorage.getItem('auth_token');
+      await axios.post('http://localhost:8000/api/admin/users', {
+        name: `${formData.firstName} ${formData.lastName}`,
+        email: formData.email,
+        phone_number: formData.phone,
+        role: formData.role,
+        class_level: formData.role === 'student' ? formData.classLevel : null,
+        password: formData.password || 'password123' 
+      }, { headers: { Authorization: `Bearer ${token}` } });
+      
+      toast.success('User created successfully');
+      setShowAddUserDialog(false);
+      resetForm();
+      fetchUsers();
+    } catch (error) {
+      console.error('Failed to create user:', error);
+      toast.error('Failed to create user');
+    }
+  };
+
+  const handleUpdateUser = async () => {
+    if (!selectedUser) return;
+    try {
+      const token = localStorage.getItem('auth_token');
+      await axios.put(`http://localhost:8000/api/admin/users/${selectedUser.id}`, {
+        name: `${formData.firstName} ${formData.lastName}`,
+        email: formData.email,
+        phone_number: formData.phone,
+        role: formData.role,
+        class_level: formData.role === 'student' ? formData.classLevel : null,
+        password: formData.password || undefined 
+      }, { headers: { Authorization: `Bearer ${token}` } });
+
+      toast.success('User updated successfully');
+      setShowEditDialog(false);
+      resetForm();
+      fetchUsers();
+    } catch (error) {
+      console.error('Failed to update user:', error);
+      toast.error('Failed to update user');
+    }
+  };
+
+  const handleToggleStatus = async (userId: string) => {
+    const token = localStorage.getItem('auth_token');
+    if (!token) {
+      toast.error('You must be logged in to perform this action');
+      return;
+    }
+
+    try {
+      await axios.post(`http://localhost:8000/api/admin/users/${userId}/toggle-status`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      toast.success('User status updated successfully');
+      fetchUsers();
+    } catch (error) {
+      console.error('Failed to toggle status:', error);
+      toast.error('Failed to update user status');
+    }
+  };
+
+  const handleDeleteUser = async () => {
+    if (!selectedUser) return;
+    try {
+        const token = localStorage.getItem('auth_token');
+        await axios.delete(`http://localhost:8000/api/admin/users/${selectedUser.id}`, {
+            headers: { Authorization: `Bearer ${token}` }
+        });
+        toast.success('User deleted successfully');
+        setShowDeleteDialog(false);
+        setSelectedUser(null);
+        fetchUsers();
+    } catch (error) {
+        console.error('Failed to delete user:', error);
+        toast.error('Failed to delete user');
+    }
   };
 
   const getRoleBadgeColor = (role: string) => {
@@ -152,6 +335,8 @@ export function UserManagement({ user }: UserManagementProps) {
         return Users;
     }
   };
+
+  const filteredUsers = users; // Filtering is handled by backend now
 
   return (
     <div className="space-y-6">
@@ -346,7 +531,11 @@ export function UserManagement({ user }: UserManagementProps) {
             {/* Results Count */}
             <div className="mt-4 flex items-center justify-between">
               <p className="text-sm text-gray-600 dark:text-gray-400">
-                Showing <span className="font-semibold dark:text-white">{filteredUsers.length}</span> of <span className="font-semibold dark:text-white">{mockUsers.length}</span> users
+                Showing <span className="font-semibold dark:text-white">
+                  {users.length > 0 ? (currentPage - 1) * 10 + 1 : 0}
+                </span> - <span className="font-semibold dark:text-white">
+                  {Math.min(currentPage * 10, stats.total)}
+                </span> of <span className="font-semibold dark:text-white">{stats.total}</span> users
               </p>
               {searchQuery && (
                 <Button
@@ -392,12 +581,24 @@ export function UserManagement({ user }: UserManagementProps) {
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-gray-50 dark:bg-white/5 hover:bg-gray-50 dark:hover:bg-white/5">
-                      <TableHead className="dark:text-gray-300">User</TableHead>
-                      <TableHead className="dark:text-gray-300">Role</TableHead>
-                      <TableHead className="dark:text-gray-300">Class</TableHead>
-                      <TableHead className="dark:text-gray-300">Contact</TableHead>
-                      <TableHead className="dark:text-gray-300">Joined</TableHead>
-                      <TableHead className="dark:text-gray-300">Status</TableHead>
+                      <TableHead className="dark:text-gray-300 cursor-pointer" onClick={() => handleSort('name')}>
+                        <div className="flex items-center">User <SortIcon field="name" /></div>
+                      </TableHead>
+                      <TableHead className="dark:text-gray-300 cursor-pointer" onClick={() => handleSort('role')}>
+                        <div className="flex items-center">Role <SortIcon field="role" /></div>
+                      </TableHead>
+                      <TableHead className="dark:text-gray-300 cursor-pointer" onClick={() => handleSort('class_level')}>
+                        <div className="flex items-center">Class <SortIcon field="class_level" /></div>
+                      </TableHead>
+                      <TableHead className="dark:text-gray-300 cursor-pointer" onClick={() => handleSort('email')}>
+                        <div className="flex items-center">Contact <SortIcon field="email" /></div>
+                      </TableHead>
+                      <TableHead className="dark:text-gray-300 cursor-pointer" onClick={() => handleSort('created_at')}>
+                        <div className="flex items-center">Joined <SortIcon field="created_at" /></div>
+                      </TableHead>
+                      <TableHead className="dark:text-gray-300 cursor-pointer" onClick={() => handleSort('is_active')}>
+                        <div className="flex items-center">Status <SortIcon field="is_active" /></div>
+                      </TableHead>
                       <TableHead className="dark:text-gray-300 text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -658,7 +859,7 @@ export function UserManagement({ user }: UserManagementProps) {
               </div>
             )}
 
-            {filteredUsers.length === 0 && (
+            {filteredUsers.length === 0 ? (
               <div className="text-center py-12">
                 <UserX className="w-16 h-16 mx-auto mb-4 text-gray-400" />
                 <h3 className="text-lg font-semibold mb-2 dark:text-white">No users found</h3>
@@ -676,6 +877,34 @@ export function UserManagement({ user }: UserManagementProps) {
                   className="dark:border-white/10"
                 >
                   Clear all filters
+                </Button>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between mt-6 border-t pt-4 dark:border-white/10">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage === 1 || isLoading}
+                  className="dark:border-white/10 dark:text-white"
+                >
+                  <ChevronLeft className="w-4 h-4 mr-2" />
+                  Previous
+                </Button>
+                
+                <div className="text-sm text-gray-600 dark:text-gray-400">
+                  Page <span className="font-medium text-gray-900 dark:text-white">{currentPage}</span> of <span className="font-medium text-gray-900 dark:text-white">{totalPages}</span>
+                </div>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages || isLoading}
+                  className="dark:border-white/10 dark:text-white"
+                >
+                  Next
+                  <ChevronRight className="w-4 h-4 ml-2" />
                 </Button>
               </div>
             )}
@@ -696,23 +925,51 @@ export function UserManagement({ user }: UserManagementProps) {
           <div className="grid grid-cols-2 gap-4 py-4">
             <div className="space-y-2">
               <Label htmlFor="firstName" className="dark:text-white">First Name</Label>
-              <Input id="firstName" placeholder="Enter first name" className="dark:bg-white/5 dark:border-white/10 dark:text-white" />
+              <Input 
+                id="firstName" 
+                placeholder="Enter first name" 
+                className="dark:bg-white/5 dark:border-white/10 dark:text-white" 
+                value={formData.firstName}
+                onChange={(e) => setFormData({...formData, firstName: e.target.value})}
+              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="lastName" className="dark:text-white">Last Name</Label>
-              <Input id="lastName" placeholder="Enter last name" className="dark:bg-white/5 dark:border-white/10 dark:text-white" />
+              <Input 
+                id="lastName" 
+                placeholder="Enter last name" 
+                className="dark:bg-white/5 dark:border-white/10 dark:text-white"
+                value={formData.lastName}
+                onChange={(e) => setFormData({...formData, lastName: e.target.value})}
+              />
             </div>
             <div className="space-y-2 col-span-2">
               <Label htmlFor="email" className="dark:text-white">Email</Label>
-              <Input id="email" type="email" placeholder="user@example.com" className="dark:bg-white/5 dark:border-white/10 dark:text-white" />
+              <Input 
+                id="email" 
+                type="email" 
+                placeholder="user@example.com" 
+                className="dark:bg-white/5 dark:border-white/10 dark:text-white"
+                value={formData.email}
+                onChange={(e) => setFormData({...formData, email: e.target.value})}
+              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="phone" className="dark:text-white">Phone Number</Label>
-              <Input id="phone" placeholder="+234 800 000 0000" className="dark:bg-white/5 dark:border-white/10 dark:text-white" />
+              <Input 
+                id="phone" 
+                placeholder="+234 800 000 0000" 
+                className="dark:bg-white/5 dark:border-white/10 dark:text-white"
+                value={formData.phone}
+                onChange={(e) => setFormData({...formData, phone: e.target.value})}
+              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="role" className="dark:text-white">Role</Label>
-              <Select defaultValue="student">
+              <Select 
+                value={formData.role} 
+                onValueChange={(value) => setFormData({...formData, role: value})}
+              >
                 <SelectTrigger id="role" className="dark:bg-white/5 dark:border-white/10 dark:text-white">
                   <SelectValue />
                 </SelectTrigger>
@@ -723,22 +980,34 @@ export function UserManagement({ user }: UserManagementProps) {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="class" className="dark:text-white">Class Level (Students Only)</Label>
-              <Select defaultValue="SS1">
-                <SelectTrigger id="class" className="dark:bg-white/5 dark:border-white/10 dark:text-white">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="dark:bg-gray-900 dark:border-white/10">
-                  <SelectItem value="SS1">SS1</SelectItem>
-                  <SelectItem value="SS2">SS2</SelectItem>
-                  <SelectItem value="SS3">SS3</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            {formData.role === 'student' && (
+              <div className="space-y-2">
+                <Label htmlFor="class" className="dark:text-white">Class Level (Students Only)</Label>
+                <Select 
+                  value={formData.classLevel} 
+                  onValueChange={(value) => setFormData({...formData, classLevel: value})}
+                >
+                  <SelectTrigger id="class" className="dark:bg-white/5 dark:border-white/10 dark:text-white">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="dark:bg-gray-900 dark:border-white/10">
+                    <SelectItem value="SS1">SS1</SelectItem>
+                    <SelectItem value="SS2">SS2</SelectItem>
+                    <SelectItem value="SS3">SS3</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="space-y-2 col-span-2">
               <Label htmlFor="password" className="dark:text-white">Temporary Password</Label>
-              <Input id="password" type="password" placeholder="Enter temporary password" className="dark:bg-white/5 dark:border-white/10 dark:text-white" />
+              <Input 
+                id="password" 
+                type="password" 
+                placeholder="Enter temporary password" 
+                className="dark:bg-white/5 dark:border-white/10 dark:text-white"
+                value={formData.password}
+                onChange={(e) => setFormData({...formData, password: e.target.value})}
+              />
             </div>
           </div>
 
@@ -747,10 +1016,7 @@ export function UserManagement({ user }: UserManagementProps) {
               Cancel
             </Button>
             <Button 
-              onClick={() => {
-                toast.success('User created successfully');
-                setShowAddUserDialog(false);
-              }}
+              onClick={handleAddUser}
               className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
             >
               <UserPlus className="w-4 h-4 mr-2" />
@@ -776,7 +1042,8 @@ export function UserManagement({ user }: UserManagementProps) {
                 <Label htmlFor="editFirstName" className="dark:text-white">First Name</Label>
                 <Input 
                   id="editFirstName" 
-                  defaultValue={selectedUser.firstName} 
+                  value={formData.firstName}
+                  onChange={(e) => setFormData({...formData, firstName: e.target.value})}
                   className="dark:bg-white/5 dark:border-white/10 dark:text-white" 
                 />
               </div>
@@ -784,7 +1051,8 @@ export function UserManagement({ user }: UserManagementProps) {
                 <Label htmlFor="editLastName" className="dark:text-white">Last Name</Label>
                 <Input 
                   id="editLastName" 
-                  defaultValue={selectedUser.lastName} 
+                  value={formData.lastName}
+                  onChange={(e) => setFormData({...formData, lastName: e.target.value})}
                   className="dark:bg-white/5 dark:border-white/10 dark:text-white" 
                 />
               </div>
@@ -793,7 +1061,8 @@ export function UserManagement({ user }: UserManagementProps) {
                 <Input 
                   id="editEmail" 
                   type="email" 
-                  defaultValue={selectedUser.email} 
+                  value={formData.email}
+                  onChange={(e) => setFormData({...formData, email: e.target.value})}
                   className="dark:bg-white/5 dark:border-white/10 dark:text-white" 
                 />
               </div>
@@ -801,13 +1070,17 @@ export function UserManagement({ user }: UserManagementProps) {
                 <Label htmlFor="editPhone" className="dark:text-white">Phone Number</Label>
                 <Input 
                   id="editPhone" 
-                  defaultValue={selectedUser.phoneNumber} 
+                  value={formData.phone}
+                  onChange={(e) => setFormData({...formData, phone: e.target.value})}
                   className="dark:bg-white/5 dark:border-white/10 dark:text-white" 
                 />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="editRole" className="dark:text-white">Role</Label>
-                <Select defaultValue={selectedUser.role}>
+                <Select 
+                  value={formData.role} 
+                  onValueChange={(value) => setFormData({...formData, role: value})}
+                >
                   <SelectTrigger id="editRole" className="dark:bg-white/5 dark:border-white/10 dark:text-white">
                     <SelectValue />
                   </SelectTrigger>
@@ -818,10 +1091,13 @@ export function UserManagement({ user }: UserManagementProps) {
                   </SelectContent>
                 </Select>
               </div>
-              {selectedUser.classLevel && (
+              {formData.role === 'student' && (
                 <div className="space-y-2">
                   <Label htmlFor="editClass" className="dark:text-white">Class Level</Label>
-                  <Select defaultValue={selectedUser.classLevel}>
+                  <Select 
+                    value={formData.classLevel} 
+                    onValueChange={(value) => setFormData({...formData, classLevel: value})}
+                  >
                     <SelectTrigger id="editClass" className="dark:bg-white/5 dark:border-white/10 dark:text-white">
                       <SelectValue />
                     </SelectTrigger>
@@ -841,11 +1117,7 @@ export function UserManagement({ user }: UserManagementProps) {
               Cancel
             </Button>
             <Button 
-              onClick={() => {
-                toast.success('User updated successfully');
-                setShowEditDialog(false);
-                setSelectedUser(null);
-              }}
+              onClick={handleUpdateUser}
               className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
             >
               Save Changes

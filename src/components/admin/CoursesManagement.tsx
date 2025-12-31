@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { User, Course } from '../../types';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
+import { Label } from '../ui/label';
+import { Textarea } from '../ui/textarea';
 import { Badge } from '../ui/badge';
 import {
   BookOpen,
@@ -29,8 +31,13 @@ import {
   Lock,
   Zap,
   Target,
+  ChevronLeft,
+  ChevronRight,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown
 } from 'lucide-react';
-import { mockCourses, mockEnrollments } from '../../lib/mockData';
+import axios from 'axios';
 import { formatCurrency, formatDate } from '../../lib/utils';
 import {
   Select,
@@ -60,11 +67,14 @@ import { motion } from 'motion/react';
 import { toast } from 'sonner';
 import { ImageWithFallback } from '../figma/ImageWithFallback';
 
+import { CourseContentManager } from './CourseContentManager';
+
 interface CoursesManagementProps {
   user: User;
 }
 
 export function CoursesManagement({ user }: CoursesManagementProps) {
+  const [courses, setCourses] = useState<Course[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [levelFilter, setLevelFilter] = useState<string>('all');
@@ -72,45 +82,145 @@ export function CoursesManagement({ user }: CoursesManagementProps) {
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showDetailsDialog, setShowDetailsDialog] = useState(false);
+  const [showEditDialog, setShowEditDialog] = useState(false);
+  const [showContentDialog, setShowContentDialog] = useState(false);
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [formData, setFormData] = useState({
+    title: '',
+    description: '',
+    price: '',
+    category: '',
+    level: '',
+    thumbnail: ''
+  });
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
-
-  // Filter courses
-  const filteredCourses = mockCourses.filter((course) => {
-    const matchesSearch = 
-      course.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      course.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      course.instructorName.toLowerCase().includes(searchQuery.toLowerCase());
-    
-    const matchesCategory = categoryFilter === 'all' || course.category === categoryFilter;
-    const matchesLevel = levelFilter === 'all' || course.level.includes(levelFilter as any);
-    const matchesStatus = statusFilter === 'all' || 
-      (statusFilter === 'published' && course.isPublished) ||
-      (statusFilter === 'draft' && !course.isPublished);
-
-    return matchesSearch && matchesCategory && matchesLevel && matchesStatus;
+  
+  // Pagination & Sorting State
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [isLoading, setIsLoading] = useState(false);
+  const [sortField, setSortField] = useState('created_at');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [stats, setStats] = useState({
+    total: 0,
+    published: 0,
+    draft: 0,
+    totalEnrollments: 0,
+    totalRevenue: 0,
+    averageRating: 0
   });
 
-  // Statistics
-  const stats = {
-    total: mockCourses.length,
-    published: mockCourses.filter(c => c.isPublished).length,
-    draft: mockCourses.filter(c => !c.isPublished).length,
-    totalEnrollments: mockCourses.reduce((sum, c) => sum + c.enrollmentCount, 0),
-    totalRevenue: mockCourses.reduce((sum, c) => sum + (c.price * c.enrollmentCount), 0),
-    averageRating: (mockCourses.reduce((sum, c) => sum + c.rating, 0) / mockCourses.length).toFixed(1),
+  const fetchCourses = async () => {
+    const token = localStorage.getItem('auth_token');
+    if (!token) return;
+
+    setIsLoading(true);
+    try {
+      const queryParams = new URLSearchParams({
+        page: currentPage.toString(),
+        search: searchQuery,
+        category: categoryFilter,
+        level: levelFilter,
+        status: statusFilter,
+        sort_by: sortField,
+        sort_order: sortOrder
+      });
+
+      const res = await axios.get(`http://localhost:8000/api/courses?${queryParams.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      if (res.data.courses) {
+        setCourses(res.data.courses.data);
+        setTotalPages(res.data.courses.last_page);
+        if (res.data.stats) {
+          setStats(res.data.stats);
+        }
+      } else {
+        // Fallback for array response
+        setCourses(res.data);
+      }
+    } catch (error) {
+      console.error('Failed to fetch courses', error);
+      toast.error('Failed to load courses');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  // Get unique categories
-  const categories = Array.from(new Set(mockCourses.map(c => c.category)));
+  useEffect(() => {
+    fetchCourses();
+  }, []); // Run once on mount
 
-  const handleTogglePublish = (courseId: string) => {
-    toast.success('Course status updated successfully');
+  // React to filter changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, categoryFilter, levelFilter, statusFilter]);
+
+  // React to page/sort changes
+  useEffect(() => {
+    fetchCourses();
+  }, [currentPage, searchQuery, categoryFilter, levelFilter, statusFilter, sortField, sortOrder]);
+
+  // Handlers for sorting
+  const SortIcon = ({ field }: { field: string }) => {
+    if (sortField !== field) return <ArrowUpDown className="ml-2 h-4 w-4 text-gray-400" />;
+    return sortOrder === 'asc' ? 
+      <ArrowUp className="ml-2 h-4 w-4 text-blue-500" /> : 
+      <ArrowDown className="ml-2 h-4 w-4 text-blue-500" />;
+  };
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortOrder('asc');
+    }
   };
 
-  const handleDeleteCourse = () => {
-    toast.success('Course deleted successfully');
-    setShowDeleteDialog(false);
-    setSelectedCourse(null);
+  const filteredCourses = courses; // Filtering is handled by backend
+
+  // Get unique categories (we can hardcode or fetch)
+  const categories = ['Mathematics', 'Science', 'English', 'Technology', 'Arts'];
+
+  const handleTogglePublish = async (courseId: string) => {
+    try {
+      const token = localStorage.getItem('auth_token');
+      // Assuming endpoint exists for toggling status, otherwise update entire object
+      const course = courses.find(c => c.id === courseId);
+      if (!course) return;
+
+      const newStatus = course.isPublished ? 'draft' : 'published';
+      
+      await axios.put(`http://localhost:8000/api/courses/${courseId}`, {
+        status: newStatus
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      toast.success('Course status updated successfully');
+      fetchCourses();
+    } catch (error) {
+      console.error('Failed to update status', error);
+      toast.error('Failed to update course status');
+    }
+  };
+
+  const handleDeleteCourse = async () => {
+    if (!selectedCourse) return;
+    try {
+      const token = localStorage.getItem('auth_token');
+      await axios.delete(`http://localhost:8000/api/courses/${selectedCourse.id}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      toast.success('Course deleted successfully');
+      setShowDeleteDialog(false);
+      setSelectedCourse(null);
+      fetchCourses();
+    } catch (error) {
+      console.error('Failed to delete course', error);
+      toast.error('Failed to delete course');
+    }
   };
 
   const getCategoryColor = (category: string) => {
@@ -122,6 +232,97 @@ export function CoursesManagement({ user }: CoursesManagementProps) {
       'Arts': 'from-yellow-500 to-orange-500',
     };
     return colors[category] || 'from-gray-500 to-gray-600';
+  };
+
+  const handleEditClick = (course: Course) => {
+    setSelectedCourse(course);
+    setFormData({
+      title: course.title,
+      description: course.description,
+      price: course.price.toString(),
+      category: course.category,
+      level: course.level[0] || '',
+      thumbnail: course.thumbnail
+    });
+    setShowEditDialog(true);
+  };
+
+  const handleCreateClick = () => {
+    setFormData({
+      title: '',
+      description: '',
+      price: '',
+      category: '',
+      level: '',
+      thumbnail: ''
+    });
+    setShowCreateDialog(true);
+  };
+
+  const handleCreateCourse = async () => {
+    try {
+      setIsLoading(true);
+      const token = localStorage.getItem('auth_token');
+      
+      if (!formData.title || !formData.price) {
+        toast.error('Please fill in all required fields');
+        return;
+      }
+
+      await axios.post('http://localhost:8000/api/courses', {
+        title: formData.title,
+        description: formData.description,
+        price: parseFloat(formData.price),
+        subject: formData.category,
+        class_level: formData.level,
+        thumbnail_url: formData.thumbnail
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      toast.success('Course created successfully');
+      setShowCreateDialog(false);
+      fetchCourses();
+    } catch (error) {
+      console.error('Failed to create course', error);
+      toast.error('Failed to create course');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleUpdateCourse = async () => {
+    if (!selectedCourse) return;
+    
+    try {
+      setIsLoading(true);
+      const token = localStorage.getItem('auth_token');
+
+      if (!formData.title || !formData.price) {
+        toast.error('Please fill in all required fields');
+        return;
+      }
+
+      await axios.put(`http://localhost:8000/api/courses/${selectedCourse.id}`, {
+        title: formData.title,
+        description: formData.description,
+        price: parseFloat(formData.price),
+        subject: formData.category,
+        class_level: formData.level,
+        thumbnail_url: formData.thumbnail
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      toast.success('Course updated successfully');
+      setShowEditDialog(false);
+      fetchCourses();
+    } catch (error) {
+      console.error('Failed to update course', error);
+      toast.error('Failed to update course');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -208,7 +409,7 @@ export function CoursesManagement({ user }: CoursesManagementProps) {
           },
           {
             label: 'Avg Enrollment',
-            value: Math.round(stats.totalEnrollments / stats.total),
+            value: stats.total > 0 ? Math.round(stats.totalEnrollments / stats.total) : 0,
             icon: TrendingUp,
             gradient: 'from-green-500 to-emerald-500',
             bgGradient: 'from-green-500/10 to-emerald-500/10',
@@ -263,7 +464,10 @@ export function CoursesManagement({ user }: CoursesManagementProps) {
                 <CardTitle className="dark:text-white">Search & Filter</CardTitle>
               </div>
               <div className="flex flex-wrap gap-2">
-                <Button className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700">
+                <Button 
+                  onClick={handleCreateClick}
+                  className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
+                >
                   <Plus className="w-4 h-4 mr-2" />
                   Add Course
                 </Button>
@@ -335,14 +539,37 @@ export function CoursesManagement({ user }: CoursesManagementProps) {
             {/* Results Count */}
             <div className="mt-4 flex items-center justify-between">
               <p className="text-sm text-gray-600 dark:text-gray-400">
-                Showing <span className="font-semibold dark:text-white">{filteredCourses.length}</span> of <span className="font-semibold dark:text-white">{mockCourses.length}</span> courses
+                Showing <span className="font-semibold dark:text-white">{filteredCourses.length}</span> courses (Page {currentPage} of {totalPages})
               </p>
-              <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as 'grid' | 'list')}>
-                <TabsList className="dark:bg-white/5">
-                  <TabsTrigger value="grid" className="dark:text-white">Grid</TabsTrigger>
-                  <TabsTrigger value="list" className="dark:text-white">List</TabsTrigger>
-                </TabsList>
-              </Tabs>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+                  className="dark:bg-white/5 dark:border-white/10"
+                  title={`Sort ${sortOrder === 'asc' ? 'Descending' : 'Ascending'}`}
+                >
+                  {sortOrder === 'asc' ? <ArrowUp className="h-4 w-4" /> : <ArrowDown className="h-4 w-4" />}
+                </Button>
+                <Select value={sortField} onValueChange={(val) => setSortField(val)}>
+                  <SelectTrigger className="w-[140px] dark:bg-white/5 dark:border-white/10 dark:text-white">
+                    <SelectValue placeholder="Sort By" />
+                  </SelectTrigger>
+                  <SelectContent className="dark:bg-gray-900 dark:border-white/10">
+                    <SelectItem value="created_at">Date Created</SelectItem>
+                    <SelectItem value="title">Title</SelectItem>
+                    <SelectItem value="price">Price</SelectItem>
+                    <SelectItem value="status">Status</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as 'grid' | 'list')}>
+                  <TabsList className="dark:bg-white/5">
+                    <TabsTrigger value="grid" className="dark:text-white">Grid</TabsTrigger>
+                    <TabsTrigger value="list" className="dark:text-white">List</TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -403,9 +630,22 @@ export function CoursesManagement({ user }: CoursesManagementProps) {
                                 <Eye className="w-4 h-4 mr-2" />
                                 View Details
                               </DropdownMenuItem>
-                              <DropdownMenuItem className="dark:hover:bg-white/5 dark:text-white">
+                              <DropdownMenuItem 
+                                className="dark:hover:bg-white/5 dark:text-white"
+                                onClick={() => handleEditClick(course)}
+                              >
                                 <Edit className="w-4 h-4 mr-2" />
                                 Edit Course
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  setSelectedCourse(course);
+                                  setShowContentDialog(true);
+                                }}
+                                className="dark:hover:bg-white/5 dark:text-white"
+                              >
+                                <BookOpen className="w-4 h-4 mr-2" />
+                                Manage Content
                               </DropdownMenuItem>
                               <DropdownMenuItem
                                 onClick={() => handleTogglePublish(course.id)}
@@ -614,7 +854,10 @@ export function CoursesManagement({ user }: CoursesManagementProps) {
                                   <Eye className="w-4 h-4 mr-2" />
                                   View Details
                                 </DropdownMenuItem>
-                                <DropdownMenuItem className="dark:hover:bg-white/5 dark:text-white">
+                                <DropdownMenuItem 
+                                  className="dark:hover:bg-white/5 dark:text-white"
+                                  onClick={() => handleEditClick(course)}
+                                >
                                   <Edit className="w-4 h-4 mr-2" />
                                   Edit Course
                                 </DropdownMenuItem>
@@ -656,15 +899,15 @@ export function CoursesManagement({ user }: CoursesManagementProps) {
               </div>
             )}
 
-            {filteredCourses.length === 0 && (
+            {filteredCourses.length === 0 ? (
               <div className="text-center py-12">
-                <BookOpen className="w-16 h-16 mx-auto mb-4 text-gray-400" />
+                <Target className="w-16 h-16 mx-auto mb-4 text-gray-400" />
                 <h3 className="text-lg font-semibold mb-2 dark:text-white">No courses found</h3>
                 <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
                   Try adjusting your search or filters
                 </p>
-                <Button
-                  variant="outline"
+                <Button 
+                  variant="outline" 
                   onClick={() => {
                     setSearchQuery('');
                     setCategoryFilter('all');
@@ -674,6 +917,34 @@ export function CoursesManagement({ user }: CoursesManagementProps) {
                   className="dark:border-white/10"
                 >
                   Clear all filters
+                </Button>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between mt-6 border-t pt-4 dark:border-white/10">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage === 1 || isLoading}
+                  className="dark:border-white/10 dark:text-white"
+                >
+                  <ChevronLeft className="w-4 h-4 mr-2" />
+                  Previous
+                </Button>
+                
+                <div className="text-sm text-gray-600 dark:text-gray-400">
+                  Page <span className="font-medium text-gray-900 dark:text-white">{currentPage}</span> of <span className="font-medium text-gray-900 dark:text-white">{totalPages}</span>
+                </div>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages || isLoading}
+                  className="dark:border-white/10 dark:text-white"
+                >
+                  Next
+                  <ChevronRight className="w-4 h-4 ml-2" />
                 </Button>
               </div>
             )}
@@ -837,9 +1108,267 @@ export function CoursesManagement({ user }: CoursesManagementProps) {
             >
               Close
             </Button>
-            <Button className="bg-gradient-to-r from-blue-600 to-purple-600">
+            <Button 
+              className="bg-gradient-to-r from-blue-600 to-purple-600"
+              onClick={() => {
+                setShowDetailsDialog(false);
+                if (selectedCourse) handleEditClick(selectedCourse);
+              }}
+            >
               <Edit className="w-4 h-4 mr-2" />
               Edit Course
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setShowDetailsDialog(false);
+                setShowContentDialog(true);
+              }}
+              className="ml-2"
+            >
+              <BookOpen className="w-4 h-4 mr-2" />
+              Manage Content
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Manage Content Dialog */}
+      <Dialog open={showContentDialog} onOpenChange={setShowContentDialog}>
+        <DialogContent className="dark:bg-gray-900 dark:border-white/10 max-w-4xl h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="dark:text-white">Manage Course Content</DialogTitle>
+            <DialogDescription className="dark:text-gray-400">
+              {selectedCourse?.title}
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="flex-1 overflow-y-auto pr-2">
+            {selectedCourse && <CourseContentManager course={selectedCourse} />}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Course Dialog */}
+      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
+        <DialogContent className="dark:bg-gray-900 dark:border-white/10 max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="dark:text-white">Edit Course</DialogTitle>
+            <DialogDescription className="dark:text-gray-400">
+              Update course information
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="title" className="dark:text-white">Course Title</Label>
+              <Input
+                id="title"
+                value={formData.title}
+                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                className="dark:bg-white/5 dark:border-white/10 dark:text-white"
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="description" className="dark:text-white">Description</Label>
+              <Textarea
+                id="description"
+                value={formData.description}
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                className="dark:bg-white/5 dark:border-white/10 dark:text-white"
+                rows={3}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="price" className="dark:text-white">Price (NGN)</Label>
+                <Input
+                  id="price"
+                  type="number"
+                  value={formData.price}
+                  onChange={(e) => setFormData({ ...formData, price: e.target.value })}
+                  className="dark:bg-white/5 dark:border-white/10 dark:text-white"
+                />
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="category" className="dark:text-white">Category</Label>
+                <Select 
+                  value={formData.category} 
+                  onValueChange={(val) => setFormData({ ...formData, category: val })}
+                >
+                  <SelectTrigger className="dark:bg-white/5 dark:border-white/10 dark:text-white">
+                    <SelectValue placeholder="Select Category" />
+                  </SelectTrigger>
+                  <SelectContent className="dark:bg-gray-900 dark:border-white/10">
+                    {categories.map(cat => (
+                      <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="level" className="dark:text-white">Class Level</Label>
+                <Select 
+                  value={formData.level} 
+                  onValueChange={(val) => setFormData({ ...formData, level: val })}
+                >
+                  <SelectTrigger className="dark:bg-white/5 dark:border-white/10 dark:text-white">
+                    <SelectValue placeholder="Select Level" />
+                  </SelectTrigger>
+                  <SelectContent className="dark:bg-gray-900 dark:border-white/10">
+                    <SelectItem value="SS1">SS1</SelectItem>
+                    <SelectItem value="SS2">SS2</SelectItem>
+                    <SelectItem value="SS3">SS3</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="thumbnail" className="dark:text-white">Thumbnail URL</Label>
+                <Input
+                  id="thumbnail"
+                  value={formData.thumbnail}
+                  onChange={(e) => setFormData({ ...formData, thumbnail: e.target.value })}
+                  className="dark:bg-white/5 dark:border-white/10 dark:text-white"
+                />
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowEditDialog(false)}
+              className="dark:border-white/10"
+            >
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleUpdateCourse}
+              disabled={isLoading}
+              className="bg-gradient-to-r from-blue-600 to-purple-600"
+            >
+              {isLoading ? 'Saving...' : 'Save Changes'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* Create Course Dialog */}
+      <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+        <DialogContent className="dark:bg-gray-900 dark:border-white/10 max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="dark:text-white">Create New Course</DialogTitle>
+            <DialogDescription className="dark:text-gray-400">
+              Add a new course to your platform
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="create-title" className="dark:text-white">Course Title</Label>
+              <Input
+                id="create-title"
+                value={formData.title}
+                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                placeholder="e.g. Advanced Mathematics for SS3"
+                className="dark:bg-white/5 dark:border-white/10 dark:text-white"
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="create-description" className="dark:text-white">Description</Label>
+              <Textarea
+                id="create-description"
+                value={formData.description}
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                placeholder="Course overview and learning objectives..."
+                className="dark:bg-white/5 dark:border-white/10 dark:text-white"
+                rows={3}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="create-price" className="dark:text-white">Price (NGN)</Label>
+                <Input
+                  id="create-price"
+                  type="number"
+                  value={formData.price}
+                  onChange={(e) => setFormData({ ...formData, price: e.target.value })}
+                  placeholder="0.00"
+                  className="dark:bg-white/5 dark:border-white/10 dark:text-white"
+                />
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="create-category" className="dark:text-white">Category</Label>
+                <Select 
+                  value={formData.category} 
+                  onValueChange={(val) => setFormData({ ...formData, category: val })}
+                >
+                  <SelectTrigger className="dark:bg-white/5 dark:border-white/10 dark:text-white">
+                    <SelectValue placeholder="Select Category" />
+                  </SelectTrigger>
+                  <SelectContent className="dark:bg-gray-900 dark:border-white/10">
+                    {categories.map(cat => (
+                      <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="create-level" className="dark:text-white">Class Level</Label>
+                <Select 
+                  value={formData.level} 
+                  onValueChange={(val) => setFormData({ ...formData, level: val })}
+                >
+                  <SelectTrigger className="dark:bg-white/5 dark:border-white/10 dark:text-white">
+                    <SelectValue placeholder="Select Level" />
+                  </SelectTrigger>
+                  <SelectContent className="dark:bg-gray-900 dark:border-white/10">
+                    <SelectItem value="SS1">SS1</SelectItem>
+                    <SelectItem value="SS2">SS2</SelectItem>
+                    <SelectItem value="SS3">SS3</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="create-thumbnail" className="dark:text-white">Thumbnail URL</Label>
+                <Input
+                  id="create-thumbnail"
+                  value={formData.thumbnail}
+                  onChange={(e) => setFormData({ ...formData, thumbnail: e.target.value })}
+                  placeholder="https://..."
+                  className="dark:bg-white/5 dark:border-white/10 dark:text-white"
+                />
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowCreateDialog(false)}
+              className="dark:border-white/10"
+            >
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleCreateCourse}
+              disabled={isLoading}
+              className="bg-gradient-to-r from-blue-600 to-purple-600"
+            >
+              {isLoading ? 'Creating...' : 'Create Course'}
             </Button>
           </DialogFooter>
         </DialogContent>

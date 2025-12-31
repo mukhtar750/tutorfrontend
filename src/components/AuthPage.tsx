@@ -25,11 +25,11 @@ import {
 } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { motion } from 'motion/react';
+import axios from 'axios';
 
 interface AuthPageProps {
   onLogin: (user: User) => void;
 }
-
 export function AuthPage({ onLogin }: AuthPageProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
@@ -42,25 +42,31 @@ export function AuthPage({ onLogin }: AuthPageProps) {
     return () => window.removeEventListener('mousemove', handleMouseMove);
   }, []);
 
-  const handleLogin = (role: UserRole) => {
+  const handleLogin = async (role: UserRole, email: string, password: string) => {
     setIsLoading(true);
-    
-    setTimeout(() => {
-      const mockUser: User = {
-        id: `${role}-1`,
-        email: `${role}@tutorplus.com`,
-        firstName: role === 'student' ? 'James' : role === 'instructor' ? 'Chidi' : 'Fatima',
-        lastName: role === 'student' ? 'Adebayo' : role === 'instructor' ? 'Okonkwo' : 'Yusuf',
-        role: role,
-        avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${role}`,
-        phoneNumber: '+234 803 123 4567',
-        classLevel: role === 'student' ? 'SS2' : undefined,
+    try {
+      const res = await axios.post('http://localhost:8000/api/login', { email, password });
+      const data = res.data;
+      if (data?.token) {
+        localStorage.setItem('auth_token', data.token);
+      }
+      const name: string = data.user?.name || '';
+      const [firstName, lastName] = name.split(' ');
+      const user: User = {
+        id: String(data.user?.id ?? Date.now()),
+        email: data.user?.email ?? email,
+        firstName: firstName || '',
+        lastName: lastName || '',
+        role: (data.user?.role as UserRole) || role,
+        avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${email}`,
         createdAt: new Date().toISOString(),
       };
-      
-      onLogin(mockUser);
+      onLogin(user);
+    } catch (e) {
       setIsLoading(false);
-    }, 1200);
+      return;
+    }
+    setIsLoading(false);
   };
 
   return (
@@ -306,23 +312,7 @@ export function AuthPage({ onLogin }: AuthPageProps) {
                     </TabsContent>
                   </Tabs>
 
-                  {/* Demo Notice */}
-                  <motion.div
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.5 }}
-                    className="mt-8 p-4 rounded-xl bg-blue-500/10 border border-blue-500/20"
-                  >
-                    <div className="flex items-start gap-3">
-                      <Sparkles className="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5" />
-                      <div>
-                        <p className="text-sm font-semibold text-blue-400 mb-1">Demo Mode Active</p>
-                        <p className="text-xs text-gray-400">
-                          Credentials are pre-filled. Click "Sign In" to explore the platform.
-                        </p>
-                      </div>
-                    </div>
-                  </motion.div>
+
                 </CardContent>
               </div>
             </Card>
@@ -394,16 +384,10 @@ function LoginForm({
   isLoading 
 }: { 
   role: UserRole; 
-  onSubmit: (role: UserRole) => void; 
+  onSubmit: (role: UserRole, email: string, password: string) => void; 
   isLoading: boolean;
 }) {
   const [showPassword, setShowPassword] = useState(false);
-  
-  const defaultEmails = {
-    student: 'james.adebayo@student.com',
-    instructor: 'prof.okonkwo@tutor.com',
-    admin: 'admin@tutorplus.com',
-  };
 
   const roleInfo = {
     student: {
@@ -435,7 +419,10 @@ function LoginForm({
       transition={{ duration: 0.3 }}
       onSubmit={(e) => {
         e.preventDefault();
-        onSubmit(role);
+        const formData = new FormData(e.currentTarget as HTMLFormElement);
+        const email = String(formData.get('email') || '');
+        const password = String(formData.get('password') || '');
+        onSubmit(role, email, password);
       }} 
       className="space-y-6"
     >
@@ -456,8 +443,8 @@ function LoginForm({
             id={`email-${role}`}
             type="email"
             placeholder="Enter your email"
-            defaultValue={defaultEmails[role]}
             className="pl-11 bg-white/5 border-white/10 text-white placeholder:text-gray-500 focus:border-blue-500/50 focus:ring-blue-500/20"
+            name="email"
             required
           />
         </div>
@@ -472,8 +459,8 @@ function LoginForm({
             id={`password-${role}`}
             type={showPassword ? 'text' : 'password'}
             placeholder="Enter your password"
-            defaultValue="password123"
             className="pl-11 pr-11 bg-white/5 border-white/10 text-white placeholder:text-gray-500 focus:border-blue-500/50 focus:ring-blue-500/20"
+            name="password"
             required
           />
           <button

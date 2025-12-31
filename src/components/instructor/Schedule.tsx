@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
@@ -31,21 +31,123 @@ import {
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { toast } from 'sonner@2.0.3';
-import { mockLiveSessions, mockCourses } from '../../lib/mockData';
+import axios from 'axios';
+
+interface LiveClass {
+  id: number;
+  title: string;
+  start_time: string;
+  end_time: string;
+  meeting_link: string;
+  course_id: number;
+  course: {
+    id: number;
+    title: string;
+  };
+  attendees_count?: number; // Backend doesn't return this yet in list, but we can assume 0 or update backend
+}
+
+interface Course {
+  id: number;
+  title: string;
+}
 
 export function Schedule() {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [upcomingSessions, setUpcomingSessions] = useState<LiveClass[]>([]);
+  const [pastSessions, setPastSessions] = useState<LiveClass[]>([]);
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Form states
+  const [title, setTitle] = useState('');
+  const [courseId, setCourseId] = useState('');
+  const [date, setDate] = useState('');
+  const [time, setTime] = useState('');
   const [meetLink, setMeetLink] = useState('');
+  const [description, setDescription] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const upcomingSessions = mockLiveSessions.filter(s => new Date(s.scheduledAt) > new Date());
-  const pastSessions = mockLiveSessions.filter(s => new Date(s.scheduledAt) <= new Date());
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const token = localStorage.getItem('auth_token');
+        const [scheduleRes, coursesRes] = await Promise.all([
+          axios.get('http://localhost:8000/api/instructor/schedule', {
+            headers: { Authorization: `Bearer ${token}` }
+          }),
+          axios.get('http://localhost:8000/api/instructor/courses', {
+            headers: { Authorization: `Bearer ${token}` }
+          })
+        ]);
 
-  const handleCreateSession = () => {
-    toast.success('Live class scheduled!', {
-      description: 'Students will be notified via email',
-    });
-    setShowCreateDialog(false);
+        setUpcomingSessions(scheduleRes.data.upcoming);
+        setPastSessions(scheduleRes.data.past);
+        setCourses(coursesRes.data);
+      } catch (error) {
+        console.error('Failed to fetch schedule data', error);
+        toast.error('Failed to load schedule');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchData();
+  }, []);
+
+  const handleCreateSession = async () => {
+    if (!title || !courseId || !date || !time) {
+      toast.error('Please fill in all required fields');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const token = localStorage.getItem('auth_token');
+      const startTime = new Date(`${date}T${time}`);
+      const endTime = new Date(startTime.getTime() + 60 * 60 * 1000); // Default 1 hour duration
+
+      await axios.post('http://localhost:8000/api/live-classes', {
+        course_id: courseId,
+        title,
+        start_time: startTime.toISOString(),
+        end_time: endTime.toISOString(),
+        meeting_link: meetLink
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      toast.success('Live class scheduled!', {
+        description: 'Students will be notified via email',
+      });
+      setShowCreateDialog(false);
+      
+      // Refresh data
+      const response = await axios.get('http://localhost:8000/api/instructor/schedule', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setUpcomingSessions(response.data.upcoming);
+      setPastSessions(response.data.past);
+      
+      // Reset form
+      setTitle('');
+      setCourseId('');
+      setDate('');
+      setTime('');
+      setMeetLink('');
+      setDescription('');
+
+    } catch (error) {
+      console.error('Failed to create session', error);
+      toast.error('Failed to schedule class');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
+
+  if (isLoading) {
+    return <div className="p-8 text-center">Loading schedule...</div>;
+  }
 
   return (
     <div className="space-y-6">
@@ -73,8 +175,13 @@ export function Schedule() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {[
           { label: 'Upcoming Classes', value: upcomingSessions.length, icon: CalendarIcon, gradient: 'from-purple-500 to-pink-500' },
-          { label: 'This Week', value: 5, icon: Clock, gradient: 'from-blue-500 to-cyan-500' },
-          { label: 'Total Students', value: 142, icon: Users, gradient: 'from-green-500 to-emerald-500' },
+          { label: 'This Week', value: upcomingSessions.filter(s => {
+            const date = new Date(s.start_time);
+            const now = new Date();
+            const nextWeek = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+            return date >= now && date <= nextWeek;
+          }).length, icon: Clock, gradient: 'from-blue-500 to-cyan-500' },
+          { label: 'Total Students', value: 0, icon: Users, gradient: 'from-green-500 to-emerald-500' }, // Placeholder as we don't calculate total students for all sessions easily
         ].map((stat, index) => (
           <motion.div
             key={index}
@@ -108,8 +215,6 @@ export function Schedule() {
           </CardHeader>
           <CardContent className="space-y-3">
             {upcomingSessions.map((session, index) => {
-              const course = mockCourses.find(c => c.id === session.courseId);
-              
               return (
                 <motion.div
                   key={session.id}
@@ -126,19 +231,19 @@ export function Schedule() {
                       </div>
                       <div className="flex-1">
                         <h4 className="font-bold text-lg mb-1 dark:text-white">{session.title}</h4>
-                        <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">{course?.title}</p>
+                        <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">{session.course.title}</p>
                         <div className="flex items-center gap-4 text-sm text-gray-600 dark:text-gray-400">
                           <div className="flex items-center gap-1">
                             <CalendarIcon className="w-4 h-4" />
-                            <span>{new Date(session.scheduledAt).toLocaleDateString()}</span>
+                            <span>{new Date(session.start_time).toLocaleDateString()}</span>
                           </div>
                           <div className="flex items-center gap-1">
                             <Clock className="w-4 h-4" />
-                            <span>{new Date(session.scheduledAt).toLocaleTimeString()}</span>
+                            <span>{new Date(session.start_time).toLocaleTimeString()}</span>
                           </div>
                           <div className="flex items-center gap-1">
                             <Users className="w-4 h-4" />
-                            <span>{session.attendees.length} enrolled</span>
+                            <span>{session.attendees_count || 0} enrolled</span>
                           </div>
                         </div>
                       </div>
@@ -147,6 +252,7 @@ export function Schedule() {
                       <Button 
                         size="sm"
                         className="bg-gradient-to-r from-purple-600 to-pink-600"
+                        onClick={() => window.open(session.meeting_link, '_blank')}
                       >
                         <ExternalLink className="w-4 h-4 mr-2" />
                         Start Class
@@ -160,16 +266,16 @@ export function Schedule() {
                     </div>
                   </div>
                   
-                  {session.meetingLink && (
+                  {session.meeting_link && (
                     <div className="pt-3 border-t border-purple-200 dark:border-purple-500/30">
                       <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">Google Meet Link:</p>
                       <a 
-                        href={session.meetingLink}
+                        href={session.meeting_link}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-sm text-purple-600 dark:text-purple-400 hover:underline font-mono"
                       >
-                        {session.meetingLink}
+                        {session.meeting_link}
                       </a>
                     </div>
                   )}
@@ -211,19 +317,21 @@ export function Schedule() {
               <Input
                 id="sessionTitle"
                 placeholder="e.g., Introduction to Calculus"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
                 className="dark:bg-white/5 dark:border-white/10"
               />
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="course" className="dark:text-gray-300">Course</Label>
-              <Select>
+              <Select value={courseId} onValueChange={setCourseId}>
                 <SelectTrigger className="dark:bg-white/5 dark:border-white/10">
                   <SelectValue placeholder="Select a course" />
                 </SelectTrigger>
                 <SelectContent className="dark:bg-gray-900 dark:border-white/10">
-                  {mockCourses.slice(0, 5).map((course) => (
-                    <SelectItem key={course.id} value={course.id}>
+                  {courses.map((course) => (
+                    <SelectItem key={course.id} value={course.id.toString()}>
                       {course.title}
                     </SelectItem>
                   ))}
@@ -237,6 +345,8 @@ export function Schedule() {
                 <Input
                   id="date"
                   type="date"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
                   className="dark:bg-white/5 dark:border-white/10"
                 />
               </div>
@@ -246,6 +356,8 @@ export function Schedule() {
                 <Input
                   id="time"
                   type="time"
+                  value={time}
+                  onChange={(e) => setTime(e.target.value)}
                   className="dark:bg-white/5 dark:border-white/10"
                 />
               </div>
@@ -274,6 +386,8 @@ export function Schedule() {
                 id="description"
                 placeholder="What will you cover in this class?"
                 rows={3}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
                 className="dark:bg-white/5 dark:border-white/10"
               />
             </div>
@@ -283,15 +397,16 @@ export function Schedule() {
                 variant="outline"
                 onClick={() => setShowCreateDialog(false)}
                 className="dark:border-white/10"
+                disabled={isSubmitting}
               >
                 Cancel
               </Button>
               <Button 
                 className="bg-gradient-to-r from-purple-600 to-pink-600"
                 onClick={handleCreateSession}
+                disabled={isSubmitting}
               >
-                <Plus className="w-4 h-4 mr-2" />
-                Schedule Class
+                {isSubmitting ? 'Scheduling...' : 'Schedule Class'}
               </Button>
             </div>
           </div>

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Button } from './ui/button';
 import { Card, CardContent } from './ui/card';
 import { Badge } from './ui/badge';
+import axios from 'axios';
 import { 
   GraduationCap, 
   BookOpen, 
@@ -45,12 +46,67 @@ interface LandingPageProps {
   onGetStarted: () => void;
 }
 
+interface HeroContent {
+  headline: string;
+  subheadline: string;
+  description: string;
+  ctaPrimary: string;
+  ctaSecondary: string;
+  heroImage: string;
+  badgeText: string;
+  stats: {
+    students: string;
+    passRate: string;
+    rating: string;
+  };
+}
+
+const defaultContent: HeroContent = {
+  headline: 'Ace Your',
+  subheadline: 'WAEC & NECO',
+  description: 'Join the revolution in secondary education. Learn from expert instructors, attend live classes, and track your progress in real-time. Your success story starts here.',
+  ctaPrimary: 'Start Learning Free',
+  ctaSecondary: 'Watch Demo',
+  heroImage: 'https://images.unsplash.com/photo-1760348082205-8bda5fbdd7b5',
+  badgeText: "Nigeria's #1 Learning Platform",
+  stats: {
+    students: '10K+',
+    passRate: '98%',
+    rating: '4.9★'
+  }
+};
+
 export function LandingPage({ onGetStarted }: LandingPageProps) {
+  const [content, setContent] = useState<HeroContent>(defaultContent);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
   const { scrollY } = useScroll();
   const opacity = useTransform(scrollY, [0, 300], [1, 0]);
   const scale = useTransform(scrollY, [0, 300], [1, 0.8]);
+
+  useEffect(() => {
+    const fetchContent = async () => {
+      try {
+        const response = await axios.get('http://localhost:8000/api/settings/hero');
+        if (response.data) {
+          // Ensure stats object exists and merge with defaults
+          const fetchedData = response.data;
+          setContent({
+            ...defaultContent,
+            ...fetchedData,
+            stats: {
+              ...defaultContent.stats,
+              ...(fetchedData.stats || {})
+            }
+          });
+        }
+      } catch (error) {
+        console.error('Failed to fetch hero content', error);
+      }
+    };
+
+    fetchContent();
+  }, []);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -200,24 +256,22 @@ export function LandingPage({ onGetStarted }: LandingPageProps) {
                   className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-blue-500/20 to-purple-500/20 border border-blue-500/30 backdrop-blur-xl mb-6"
                 >
                   <Sparkles className="w-4 h-4 text-yellow-400" />
-                  <span className="text-sm">Nigeria's #1 Learning Platform</span>
+                  <span className="text-sm">{content.badgeText}</span>
                   <Badge className="bg-gradient-to-r from-blue-600 to-purple-600 border-0">
-                    10K+ Students
+                    {content.stats.students} Students
                   </Badge>
                 </motion.div>
 
                 <h1 className="text-6xl lg:text-7xl xl:text-8xl font-bold leading-tight">
-                  <span className="block">Ace Your</span>
+                  <span className="block">{content.headline}</span>
                   <span className="block bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
-                    WAEC & NECO
+                    {content.subheadline}
                   </span>
                   <span className="block">With Confidence</span>
                 </h1>
 
                 <p className="text-xl text-gray-400 leading-relaxed max-w-xl">
-                  Join the revolution in secondary education. Learn from expert instructors, 
-                  attend live classes, and track your progress in real-time. 
-                  <span className="text-white font-semibold"> Your success story starts here.</span>
+                  {content.description}
                 </p>
               </motion.div>
 
@@ -233,7 +287,7 @@ export function LandingPage({ onGetStarted }: LandingPageProps) {
                   onClick={onGetStarted}
                 >
                   <Rocket className="w-5 h-5 mr-2 group-hover:animate-bounce" />
-                  Start Learning Free
+                  {content.ctaPrimary}
                   <ArrowRight className="w-5 h-5 ml-2 group-hover:translate-x-1 transition-transform" />
                 </Button>
                 <Button 
@@ -242,7 +296,7 @@ export function LandingPage({ onGetStarted }: LandingPageProps) {
                   className="text-lg px-8 h-14 border-white/20 hover:bg-white/10 backdrop-blur-xl group"
                 >
                   <Play className="w-5 h-5 mr-2 group-hover:scale-110 transition-transform" />
-                  Watch Demo
+                  {content.ctaSecondary}
                 </Button>
               </motion.div>
 
@@ -255,21 +309,21 @@ export function LandingPage({ onGetStarted }: LandingPageProps) {
               >
                 <div>
                   <p className="text-3xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
-                    98%
+                    {content.stats.passRate}
                   </p>
                   <p className="text-sm text-gray-400">Pass Rate</p>
                 </div>
                 <div className="w-px h-12 bg-white/20" />
                 <div>
                   <p className="text-3xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
-                    5K+
+                    {content.stats.students}
                   </p>
                   <p className="text-sm text-gray-400">Active Students</p>
                 </div>
                 <div className="w-px h-12 bg-white/20" />
                 <div>
                   <p className="text-3xl font-bold bg-gradient-to-r from-pink-400 to-orange-400 bg-clip-text text-transparent">
-                    4.9★
+                    {content.stats.rating}
                   </p>
                   <p className="text-sm text-gray-400">Average Rating</p>
                 </div>
@@ -324,7 +378,7 @@ export function LandingPage({ onGetStarted }: LandingPageProps) {
                 <div className="absolute inset-0 bg-gradient-to-r from-blue-500 to-purple-500 rounded-3xl blur-3xl opacity-50" />
                 <div className="relative rounded-3xl overflow-hidden border border-white/10 backdrop-blur-xl">
                   <img 
-                    src="https://images.unsplash.com/photo-1760348082205-8bda5fbdd7b5?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxzdHVkZW50cyUyMGNlbGVicmF0aW5nJTIwc3VjY2Vzc3xlbnwxfHx8fDE3NjMzNzc2NTh8MA&ixlib=rb-4.1.0&q=80&w=1080"
+                    src={content.heroImage}
                     alt="Students success"
                     className="w-full h-[500px] object-cover"
                   />

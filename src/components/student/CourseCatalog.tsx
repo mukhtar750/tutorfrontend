@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Course, ClassLevel } from '../../types';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Button } from '../ui/button';
@@ -15,6 +15,7 @@ import {
   Play
 } from 'lucide-react';
 import { mockCourses, mockEnrollments } from '../../lib/mockData';
+import axios from 'axios';
 import { formatCurrency } from '../../lib/utils';
 import {
   Select,
@@ -44,14 +45,15 @@ export function CourseCatalog({ userId, onNavigate }: CourseCatalogProps) {
   const [selectedLevel, setSelectedLevel] = useState<string>('all');
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
+  const [courses, setCourses] = useState<Course[]>(mockCourses);
 
   const enrolledCourseIds = mockEnrollments
     .filter(e => e.studentId === userId)
     .map(e => e.courseId);
 
-  const categories = ['all', ...Array.from(new Set(mockCourses.map(c => c.category)))];
+  const categories = ['all', ...Array.from(new Set(courses.map(c => c.category)))];
 
-  const filteredCourses = mockCourses.filter(course => {
+  const filteredCourses = courses.filter(course => {
     const matchesSearch = course.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          course.description.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCategory = selectedCategory === 'all' || course.category === selectedCategory;
@@ -64,12 +66,54 @@ export function CourseCatalog({ userId, onNavigate }: CourseCatalogProps) {
     setShowPaymentDialog(true);
   };
 
-  const handlePayment = (method: string) => {
-    console.log(`Processing payment with ${method} for course ${selectedCourse?.id}`);
-    setShowPaymentDialog(false);
-    alert('Payment successful! You are now enrolled in the course.');
-    onNavigate('my-courses');
+  const handlePayment = async (method: string) => {
+    try {
+      const token = localStorage.getItem('auth_token');
+      if (!token || !selectedCourse) throw new Error('Missing auth or course');
+      await axios.post('http://localhost:8000/api/enroll', {
+        course_id: selectedCourse.id,
+      }, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setShowPaymentDialog(false);
+      onNavigate('my-courses');
+    } catch (e) {
+      setShowPaymentDialog(false);
+      onNavigate('my-courses');
+    }
   };
+
+  useEffect(() => {
+    const token = localStorage.getItem('auth_token');
+    if (!token) return;
+    axios.get('http://localhost:8000/api/courses', {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then(res => {
+      // Backend returns { courses: { data: [...] }, stats: ... }
+      const coursesData = res.data.courses ? res.data.courses.data : res.data;
+      const apiCourses = (coursesData as any[]).map((c: any) => ({
+        id: String(c.id),
+        title: c.title,
+        description: c.description || '',
+        thumbnail: c.thumbnail || c.thumbnail_url || 'https://images.unsplash.com/photo-1635070041078-e363dbe005cb?w=800&q=80',
+        instructorId: 'instructor-1', // Placeholder as backend might not send ID in transformed response
+        instructorName: c.instructorName || 'Instructor',
+        price: Number(c.price || 0),
+        currency: 'NGN',
+        category: c.category || c.subject || 'General',
+        level: c.level ? (Array.isArray(c.level) ? c.level : [c.level]) : ['SS1'] as any,
+        duration: c.duration || '10h',
+        enrollmentCount: c.enrollmentCount || c.students || 0,
+        rating: c.rating || 4.8,
+        isPublished: c.isPublished ?? (c.status === 'published'),
+        createdAt: c.created_at || new Date().toISOString(),
+        updatedAt: c.lastUpdated || c.updated_at || new Date().toISOString(),
+      }));
+      setCourses(apiCourses);
+    }).catch(() => {
+      setCourses(mockCourses);
+    });
+  }, []);
 
   return (
     <div className="space-y-6">

@@ -10,6 +10,8 @@ import { PaymentsPage } from './components/student/PaymentsPage';
 import { AssignmentsPage } from './components/student/AssignmentsPage';
 import { StudentSchedule } from './components/student/StudentSchedule';
 import { StudentMessages } from './components/student/StudentMessages';
+import { CoursePlayer } from './components/student/CoursePlayer';
+import { GradesPage } from './components/student/GradesPage';
 import { InstructorDashboard } from './components/instructor/InstructorDashboard';
 import { MyCourses } from './components/instructor/MyCourses';
 import { CreateCourse } from './components/instructor/CreateCourse';
@@ -20,7 +22,7 @@ import { InstructorAnalytics } from './components/instructor/InstructorAnalytics
 import { Messages } from './components/instructor/Messages';
 import { AdminDashboard } from './components/admin/AdminDashboard';
 import { PaymentManagement } from './components/admin/PaymentManagement';
-import { HeroEditor } from './components/admin/HeroEditor';
+import { AdminSettings } from './components/admin/AdminSettings';
 import { UserManagement } from './components/admin/UserManagement';
 import { CoursesManagement } from './components/admin/CoursesManagement';
 import { Toaster } from './components/ui/sonner';
@@ -29,6 +31,7 @@ import { ThemeProvider } from './lib/theme-context';
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [currentPage, setCurrentPage] = useState('dashboard');
+  const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
   const [showAuth, setShowAuth] = useState(false);
 
   const handleGetStarted = () => {
@@ -47,8 +50,9 @@ export default function App() {
     setShowAuth(false);
   };
 
-  const handleNavigate = (page: string) => {
+  const handleNavigate = (page: string, id?: string) => {
     setCurrentPage(page);
+    if (id) setSelectedCourseId(id);
   };
 
   return (
@@ -86,6 +90,15 @@ export default function App() {
           return <StudentDashboard user={currentUser} onNavigate={handleNavigate} />;
         case 'my-courses':
           return <MyCoursesPage userId={currentUser.id} onNavigate={handleNavigate} />;
+        case 'course-player':
+          return selectedCourseId ? (
+            <CoursePlayer 
+              courseId={selectedCourseId} 
+              onNavigate={handleNavigate} 
+            />
+          ) : (
+            <MyCoursesPage userId={currentUser.id} onNavigate={handleNavigate} />
+          );
         case 'course-catalog':
           return <CourseCatalog userId={currentUser.id} onNavigate={handleNavigate} />;
         case 'payments':
@@ -95,9 +108,11 @@ export default function App() {
         case 'schedule':
           return <StudentSchedule userId={currentUser.id} />;
         case 'grades':
-          return <GradesPlaceholder />;
+          return <GradesPage userId={currentUser.id} />;
         case 'messages':
           return <StudentMessages userId={currentUser.id} />;
+        case 'settings':
+          return <StudentSettings userId={currentUser.id} />;
         default:
           return <StudentDashboard user={currentUser} onNavigate={handleNavigate} />;
       }
@@ -113,7 +128,7 @@ export default function App() {
         case 'create-course':
           return <CreateCourse />;
         case 'students':
-          return <Students user={currentUser} />;
+          return <Students user={currentUser} onNavigate={handleNavigate} />;
         case 'assignments':
           return <InstructorAssignments />;
         case 'schedule':
@@ -121,7 +136,7 @@ export default function App() {
         case 'analytics':
           return <InstructorAnalytics />;
         case 'messages':
-          return <Messages />;
+          return <Messages user={currentUser} />;
         default:
           return <InstructorDashboard user={currentUser} onNavigate={handleNavigate} />;
       }
@@ -141,7 +156,7 @@ export default function App() {
         case 'analytics':
           return <AnalyticsPlaceholder />;
         case 'settings':
-          return <SettingsPlaceholder />;
+          return <AdminSettings />;
         default:
           return <AdminDashboard user={currentUser} onNavigate={handleNavigate} />;
       }
@@ -289,9 +304,5 @@ export default function App() {
         </div>
       </div>
     );
-  }
-
-  function SettingsPlaceholder() {
-    return <HeroEditor />;
   }
 }

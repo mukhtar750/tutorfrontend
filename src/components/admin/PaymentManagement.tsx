@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import axios from 'axios';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
@@ -37,8 +38,14 @@ import {
   TrendingUp,
   DollarSign,
   Users,
-  FileText
+  FileText,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { motion } from 'motion/react';
 import { toast } from 'sonner@2.0.3';
 
@@ -54,100 +61,91 @@ interface Payment {
   reference: string;
 }
 
-const mockPayments: Payment[] = [
-  {
-    id: 'PAY001',
-    studentName: 'Chioma Okafor',
-    studentEmail: 'chioma@student.com',
-    courseName: 'Mathematics SS2',
-    amount: 15000,
-    status: 'pending',
-    date: '2024-11-15',
-    paymentMethod: 'Paystack',
-    reference: 'PS-2024-001'
-  },
-  {
-    id: 'PAY002',
-    studentName: 'Tunde Adeleke',
-    studentEmail: 'tunde@student.com',
-    courseName: 'Physics SS3',
-    amount: 18000,
-    status: 'pending',
-    date: '2024-11-16',
-    paymentMethod: 'Flutterwave',
-    reference: 'FW-2024-002'
-  },
-  {
-    id: 'PAY003',
-    studentName: 'Ngozi Eze',
-    studentEmail: 'ngozi@student.com',
-    courseName: 'Chemistry SS2',
-    amount: 16000,
-    status: 'paid',
-    date: '2024-11-14',
-    paymentMethod: 'Paystack',
-    reference: 'PS-2024-003'
-  },
-  {
-    id: 'PAY004',
-    studentName: 'Ibrahim Musa',
-    studentEmail: 'ibrahim@student.com',
-    courseName: 'English SS3',
-    amount: 12000,
-    status: 'paid',
-    date: '2024-11-13',
-    paymentMethod: 'Stripe',
-    reference: 'ST-2024-004'
-  },
-  {
-    id: 'PAY005',
-    studentName: 'Ada Okonkwo',
-    studentEmail: 'ada@student.com',
-    courseName: 'Biology SS2',
-    amount: 17000,
-    status: 'pending',
-    date: '2024-11-17',
-    paymentMethod: 'Flutterwave',
-    reference: 'FW-2024-005'
-  },
-];
-
 export function PaymentManagement() {
-  const [payments, setPayments] = useState<Payment[]>(mockPayments);
+  const [payments, setPayments] = useState<Payment[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'paid' | 'failed'>('all');
   const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
   const [showReceipt, setShowReceipt] = useState(false);
+  
+  // Pagination & Sorting
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [sortField, setSortField] = useState('created_at');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 
-  const filteredPayments = payments.filter(payment => {
-    const matchesSearch = payment.studentName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         payment.courseName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         payment.reference.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesFilter = filterStatus === 'all' || payment.status === filterStatus;
-    return matchesSearch && matchesFilter;
+  const [stats, setStats] = useState({
+    total: 0,
+    pending: 0,
+    paid: 0,
+    students: 0
   });
 
-  const stats = {
-    total: payments.reduce((acc, p) => acc + p.amount, 0),
-    pending: payments.filter(p => p.status === 'pending').length,
-    paid: payments.filter(p => p.status === 'paid').length,
-    students: new Set(payments.map(p => p.studentEmail)).size
+  const fetchPayments = async () => {
+    const token = localStorage.getItem('auth_token');
+    if (!token) return;
+
+    setIsLoading(true);
+    try {
+      const queryParams = new URLSearchParams({
+        page: currentPage.toString(),
+        search: searchQuery,
+        status: filterStatus,
+        sort_by: sortField,
+        sort_order: sortOrder
+      });
+
+      const res = await axios.get(`http://localhost:8000/api/admin/payments?${queryParams.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      if (res.data.payments) {
+        setPayments(res.data.payments.data);
+        setTotalPages(res.data.payments.last_page);
+        if (res.data.stats) {
+          setStats(res.data.stats);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch payments', error);
+      toast.error('Failed to load payments');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const handleMarkAsPaid = (payment: Payment) => {
-    setPayments(prev => prev.map(p => 
-      p.id === payment.id ? { ...p, status: 'paid' as const } : p
-    ));
-    
-    toast.success('Payment Confirmed!', {
-      description: `${payment.studentName}'s payment has been marked as paid. Receipt sent to ${payment.studentEmail}`,
-    });
-    
-    // Auto-show receipt
-    setTimeout(() => {
-      setSelectedPayment({ ...payment, status: 'paid' });
-      setShowReceipt(true);
-    }, 500);
+  useEffect(() => {
+    fetchPayments();
+  }, [currentPage, searchQuery, filterStatus, sortField, sortOrder]);
+
+  const handleMarkAsPaid = async (payment: Payment) => {
+    try {
+      const token = localStorage.getItem('auth_token');
+      await axios.post(`http://localhost:8000/api/admin/confirm-payment/${payment.id}`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      setPayments(prev => prev.map(p => 
+        p.id === payment.id ? { ...p, status: 'paid' as const } : p
+      ));
+      
+      toast.success('Payment Confirmed!', {
+        description: `${payment.studentName}'s payment has been marked as paid. Receipt sent to ${payment.studentEmail}`,
+      });
+      
+      // Auto-show receipt
+      setTimeout(() => {
+        setSelectedPayment({ ...payment, status: 'paid' });
+        setShowReceipt(true);
+      }, 500);
+      
+      // Refresh stats
+      fetchPayments();
+    } catch (error) {
+      console.error('Failed to confirm payment', error);
+      toast.error('Failed to confirm payment');
+    }
   };
 
   const handleDownloadReceipt = (payment: Payment) => {
@@ -160,6 +158,19 @@ export function PaymentManagement() {
     toast.success('Receipt Sent!', {
       description: `Receipt sent to ${payment.studentEmail}`,
     });
+  };
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, filterStatus]);
+
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortOrder('desc');
+    }
   };
 
   return (
@@ -242,6 +253,20 @@ export function PaymentManagement() {
               />
             </div>
             <div className="flex gap-2">
+              <Select value={sortField} onValueChange={(val) => {
+                setSortField(val);
+                setSortOrder('desc');
+              }}>
+                <SelectTrigger className="w-[140px] bg-white dark:bg-white/5 border-gray-200 dark:border-white/10">
+                  <SelectValue placeholder="Sort by" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="created_at">Date</SelectItem>
+                  <SelectItem value="amount_paid">Amount</SelectItem>
+                  <SelectItem value="payment_status">Status</SelectItem>
+                </SelectContent>
+              </Select>
+
               {['all', 'pending', 'paid', 'failed'].map((status) => (
                 <Button
                   key={status}
@@ -284,7 +309,14 @@ export function PaymentManagement() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredPayments.map((payment) => (
+                  {payments.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                        No payments found
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    payments.map((payment) => (
                     <TableRow key={payment.id} className="dark:hover:bg-white/5">
                       <TableCell className="font-mono text-sm dark:text-gray-300">
                         {payment.reference}
@@ -299,78 +331,93 @@ export function PaymentManagement() {
                       <TableCell className="font-semibold dark:text-white">
                         ₦{payment.amount.toLocaleString()}
                       </TableCell>
-                      <TableCell className="dark:text-gray-300">{payment.paymentMethod}</TableCell>
-                      <TableCell className="dark:text-gray-300">{payment.date}</TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="dark:border-white/20 dark:text-gray-300">
+                          {payment.paymentMethod}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="dark:text-gray-300">
+                        {new Date(payment.date).toLocaleDateString()}
+                      </TableCell>
                       <TableCell>
                         <Badge 
-                          variant="outline"
                           className={
                             payment.status === 'paid' 
-                              ? 'bg-green-100 dark:bg-green-500/20 text-green-700 dark:text-green-400 border-green-200 dark:border-green-500/30'
+                              ? 'bg-green-500/10 text-green-500 hover:bg-green-500/20 border-green-500/20'
                               : payment.status === 'pending'
-                              ? 'bg-orange-100 dark:bg-orange-500/20 text-orange-700 dark:text-orange-400 border-orange-200 dark:border-orange-500/30'
-                              : 'bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-400 border-red-200 dark:border-red-500/30'
+                              ? 'bg-yellow-500/10 text-yellow-500 hover:bg-yellow-500/20 border-yellow-500/20'
+                              : 'bg-red-500/10 text-red-500 hover:bg-red-500/20 border-red-500/20'
                           }
                         >
-                          {payment.status === 'paid' && <CheckCircle className="w-3 h-3 mr-1" />}
-                          {payment.status === 'pending' && <Clock className="w-3 h-3 mr-1" />}
-                          {payment.status === 'failed' && <XCircle className="w-3 h-3 mr-1" />}
                           {payment.status.charAt(0).toUpperCase() + payment.status.slice(1)}
                         </Badge>
                       </TableCell>
                       <TableCell>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="sm">
+                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
                               <MoreVertical className="w-4 h-4" />
                             </Button>
                           </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="dark:bg-gray-900 dark:border-white/10">
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => setSelectedPayment(payment)}>
+                              <FileText className="w-4 h-4 mr-2" />
+                              View Details
+                            </DropdownMenuItem>
                             {payment.status === 'pending' && (
-                              <DropdownMenuItem 
-                                onClick={() => handleMarkAsPaid(payment)}
-                                className="dark:hover:bg-white/5"
-                              >
-                                <CheckCircle className="w-4 h-4 mr-2 text-green-600" />
+                              <DropdownMenuItem onClick={() => handleMarkAsPaid(payment)}>
+                                <CheckCircle className="w-4 h-4 mr-2" />
                                 Mark as Paid
                               </DropdownMenuItem>
                             )}
-                            {payment.status === 'paid' && (
-                              <>
-                                <DropdownMenuItem 
-                                  onClick={() => {
-                                    setSelectedPayment(payment);
-                                    setShowReceipt(true);
-                                  }}
-                                  className="dark:hover:bg-white/5"
-                                >
-                                  <FileText className="w-4 h-4 mr-2" />
-                                  View Receipt
-                                </DropdownMenuItem>
-                                <DropdownMenuItem 
-                                  onClick={() => handleDownloadReceipt(payment)}
-                                  className="dark:hover:bg-white/5"
-                                >
-                                  <Download className="w-4 h-4 mr-2" />
-                                  Download Receipt
-                                </DropdownMenuItem>
-                                <DropdownMenuItem 
-                                  onClick={() => handleSendReceipt(payment)}
-                                  className="dark:hover:bg-white/5"
-                                >
-                                  <Send className="w-4 h-4 mr-2" />
-                                  Send to Student
-                                </DropdownMenuItem>
-                              </>
-                            )}
+                            <DropdownMenuItem onClick={() => handleDownloadReceipt(payment)}>
+                              <Download className="w-4 h-4 mr-2" />
+                              Download Receipt
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleSendReceipt(payment)}>
+                              <Send className="w-4 h-4 mr-2" />
+                              Send Receipt
+                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>
                     </TableRow>
-                  ))}
+                  ))
+                  )}
                 </TableBody>
               </Table>
             </div>
+
+            {/* Pagination */}
+            {payments.length > 0 && (
+              <div className="flex items-center justify-between mt-4 border-t pt-4 dark:border-white/10">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage === 1 || isLoading}
+                  className="dark:border-white/10 dark:text-white"
+                >
+                  <ChevronLeft className="w-4 h-4 mr-2" />
+                  Previous
+                </Button>
+                
+                <div className="text-sm text-gray-600 dark:text-gray-400">
+                  Page <span className="font-medium text-gray-900 dark:text-white">{currentPage}</span> of <span className="font-medium text-gray-900 dark:text-white">{totalPages}</span>
+                </div>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages || isLoading}
+                  className="dark:border-white/10 dark:text-white"
+                >
+                  Next
+                  <ChevronRight className="w-4 h-4 ml-2" />
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
       </motion.div>

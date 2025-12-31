@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
@@ -28,37 +28,75 @@ import {
   Clock,
   BarChart3
 } from 'lucide-react';
-import { mockCourses, getCoursesByInstructor } from '../../lib/mockData';
 import { formatCurrency } from '../../lib/utils';
 import { motion } from 'motion/react';
 import { User } from '../../types';
+import axios from 'axios';
+import { toast } from 'sonner@2.0.3';
 
 interface MyCoursesProps {
   user: User;
   onNavigate: (page: string) => void;
 }
 
+interface Course {
+  id: number;
+  title: string;
+  description: string;
+  thumbnail: string;
+  level: string[];
+  category: string;
+  status: string;
+  students: number;
+  lessons: number;
+  rating: number;
+  price: number;
+  created_at: string;
+}
+
 export function MyCourses({ user, onNavigate }: MyCoursesProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'published' | 'draft'>('all');
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   
-  const instructorCourses = getCoursesByInstructor(user.id);
+  useEffect(() => {
+    const fetchCourses = async () => {
+      try {
+        const token = localStorage.getItem('auth_token');
+        const response = await axios.get('http://localhost:8000/api/instructor/courses', {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        setCourses(response.data);
+      } catch (error) {
+        console.error('Failed to fetch courses', error);
+        toast.error('Failed to load courses');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchCourses();
+  }, []);
   
-  const filteredCourses = instructorCourses.filter(course => {
-    const matchesSearch = course.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         course.category.toLowerCase().includes(searchQuery.toLowerCase());
+  const filteredCourses = courses.filter(course => {
+    const matchesSearch = course.title.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesFilter = filterStatus === 'all' || 
-                         (filterStatus === 'published' && course.isPublished) ||
-                         (filterStatus === 'draft' && !course.isPublished);
+                         (filterStatus === 'published' && course.status === 'published') ||
+                         (filterStatus === 'draft' && course.status !== 'published');
     return matchesSearch && matchesFilter;
   });
 
   const stats = {
-    total: instructorCourses.length,
-    published: instructorCourses.filter(c => c.isPublished).length,
-    draft: instructorCourses.filter(c => !c.isPublished).length,
-    totalStudents: instructorCourses.reduce((acc, c) => acc + c.enrollmentCount, 0),
+    total: courses.length,
+    published: courses.filter(c => c.status === 'published').length,
+    draft: courses.filter(c => c.status !== 'published').length,
+    totalStudents: courses.reduce((acc, c) => acc + c.students, 0),
   };
+
+  if (isLoading) {
+    return <div className="p-8 text-center">Loading courses...</div>;
+  }
 
   return (
     <div className="space-y-6">
@@ -181,19 +219,19 @@ export function MyCourses({ user, onNavigate }: MyCoursesProps) {
               {/* Thumbnail */}
               <div className="relative aspect-video overflow-hidden">
                 <img 
-                  src={course.thumbnail}
+                  src={course.thumbnail || 'https://images.unsplash.com/photo-1546410531-bb4caa6b424d?w=800&q=80'}
                   alt={course.title}
                   className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
                 />
                 <div className="absolute top-3 right-3">
                   <Badge 
                     variant="outline"
-                    className={course.isPublished 
+                    className={course.status === 'published'
                       ? 'bg-green-500/90 text-white border-0 backdrop-blur-xl' 
                       : 'bg-orange-500/90 text-white border-0 backdrop-blur-xl'
                     }
                   >
-                    {course.isPublished ? 'Published' : 'Draft'}
+                    {course.status === 'published' ? 'Published' : 'Draft'}
                   </Badge>
                 </div>
                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />

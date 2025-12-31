@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import axios from 'axios';
+import { toast } from 'sonner';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
@@ -38,21 +40,46 @@ import { User } from '../../types';
 
 interface StudentsProps {
   user: User;
+  onNavigate?: (page: string, id?: string) => void;
 }
 
-const mockStudents = [
-  { id: '1', name: 'Chioma Okafor', email: 'chioma@student.com', course: 'Mathematics SS2', progress: 85, status: 'active', lastActive: '2 hours ago', grade: 'A' },
-  { id: '2', name: 'Tunde Adeleke', email: 'tunde@student.com', course: 'Physics SS3', progress: 92, status: 'active', lastActive: '1 day ago', grade: 'A+' },
-  { id: '3', name: 'Ngozi Eze', email: 'ngozi@student.com', course: 'Chemistry SS2', progress: 67, status: 'at-risk', lastActive: '5 days ago', grade: 'C' },
-  { id: '4', name: 'Ibrahim Musa', email: 'ibrahim@student.com', course: 'English SS3', progress: 78, status: 'active', lastActive: '3 hours ago', grade: 'B+' },
-  { id: '5', name: 'Ada Okonkwo', email: 'ada@student.com', course: 'Biology SS2', progress: 95, status: 'excellent', lastActive: '1 hour ago', grade: 'A+' },
-];
+interface Student {
+  id: number;
+  name: string;
+  email: string;
+  course: string;
+  progress: number;
+  grade: string;
+  status: string;
+  lastActive: string;
+}
 
-export function Students({ user }: StudentsProps) {
+export function Students({ user, onNavigate }: StudentsProps) {
+  const [students, setStudents] = useState<Student[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'at-risk' | 'excellent'>('all');
 
-  const filteredStudents = mockStudents.filter(student => {
+  useEffect(() => {
+    const fetchStudents = async () => {
+      try {
+        const token = localStorage.getItem('auth_token');
+        const response = await axios.get('http://localhost:8000/api/instructor/students', {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        setStudents(response.data);
+      } catch (error) {
+        console.error('Failed to fetch students', error);
+        toast.error('Failed to load students');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchStudents();
+  }, []);
+
+  const filteredStudents = students.filter(student => {
     const matchesSearch = student.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          student.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          student.course.toLowerCase().includes(searchQuery.toLowerCase());
@@ -61,11 +88,15 @@ export function Students({ user }: StudentsProps) {
   });
 
   const stats = {
-    total: mockStudents.length,
-    active: mockStudents.filter(s => s.status === 'active').length,
-    excellent: mockStudents.filter(s => s.status === 'excellent').length,
-    atRisk: mockStudents.filter(s => s.status === 'at-risk').length,
+    total: students.length,
+    active: students.filter(s => s.status === 'active').length,
+    excellent: students.filter(s => s.status === 'excellent').length,
+    atRisk: students.filter(s => s.status === 'at-risk').length,
   };
+
+  if (isLoading) {
+    return <div className="flex justify-center items-center h-96">Loading students...</div>;
+  }
 
   return (
     <div className="space-y-6">
@@ -245,7 +276,10 @@ export function Students({ user }: StudentsProps) {
                               <Mail className="w-4 h-4 mr-2" />
                               Send Email
                             </DropdownMenuItem>
-                            <DropdownMenuItem className="dark:hover:bg-white/5">
+                            <DropdownMenuItem 
+                              className="dark:hover:bg-white/5"
+                              onClick={() => onNavigate?.('messages', student.id.toString())}
+                            >
                               <MessageSquare className="w-4 h-4 mr-2" />
                               Send Message
                             </DropdownMenuItem>

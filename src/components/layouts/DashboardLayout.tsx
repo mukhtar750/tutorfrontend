@@ -363,6 +363,7 @@ function getNavigationItems(role: string) {
     { id: 'grades', label: 'Grades', icon: Award },
     { id: 'payments', label: 'Payments', icon: CreditCard },
     { id: 'messages', label: 'Messages', icon: MessageSquare, badge: 2 },
+    { id: 'settings', label: 'Settings', icon: Settings },
   ];
 
   const instructorItems = [

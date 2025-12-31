@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { User } from '../../types';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Button } from '../ui/button';
@@ -36,6 +36,7 @@ import {
   Shield
 } from 'lucide-react';
 import { mockAnalytics, mockCourses, mockUsers, mockPayments } from '../../lib/mockData';
+import axios from 'axios';
 import { formatCurrency, formatDate } from '../../lib/utils';
 import {
   LineChart,
@@ -62,42 +63,43 @@ interface AdminDashboardProps {
 }
 
 export function AdminDashboard({ user, onNavigate }: AdminDashboardProps) {
-  // Mock revenue data
-  const revenueData = [
-    { month: 'Jun', revenue: 1200000, enrollments: 156, expenses: 480000 },
-    { month: 'Jul', revenue: 1450000, enrollments: 189, expenses: 520000 },
-    { month: 'Aug', revenue: 1680000, enrollments: 223, expenses: 550000 },
-    { month: 'Sep', revenue: 1920000, enrollments: 267, expenses: 580000 },
-    { month: 'Oct', revenue: 2150000, enrollments: 298, expenses: 610000 },
-    { month: 'Nov', revenue: 2380000, enrollments: 342, expenses: 650000 },
-  ];
+  const [analytics, setAnalytics] = useState<any | null>(null);
 
-  // Course category distribution
-  const categoryData = [
-    { name: 'Mathematics', value: 35, color: '#3b82f6' },
-    { name: 'Science', value: 28, color: '#8b5cf6' },
-    { name: 'English', value: 20, color: '#10b981' },
-    { name: 'Technology', value: 12, color: '#f59e0b' },
-    { name: 'Others', value: 5, color: '#6b7280' },
-  ];
+  useEffect(() => {
+    const token = localStorage.getItem('auth_token');
+    if (!token) {
+      setAnalytics(null);
+      return;
+    }
+    axios.get('http://localhost:8000/api/admin/analytics', {
+      headers: { Authorization: `Bearer ${token}` }
+    }).then(res => {
+      setAnalytics(res.data);
+    }).catch(() => {
+      setAnalytics(null);
+    });
+  }, []);
+  // Revenue data from API or empty
+  const revenueData = analytics?.revenueData || [];
 
-  // User growth data
-  const userGrowthData = [
-    { week: 'Week 1', students: 45, instructors: 5 },
-    { week: 'Week 2', students: 62, instructors: 7 },
-    { week: 'Week 3', students: 78, instructors: 9 },
-    { week: 'Week 4', students: 95, instructors: 12 },
-  ];
+  // Course category distribution from API or empty
+  const categoryData = analytics?.categoryData || [];
 
-  // Top performing courses
-  const topCourses = mockCourses
-    .sort((a, b) => b.enrollmentCount - a.enrollmentCount)
-    .slice(0, 5);
+  // Top performing courses from API or empty
+  const topCourses = analytics?.topCourses || [];
 
-  // Recent payments
-  const recentPayments = mockPayments
-    .filter(p => p.status === 'completed')
-    .slice(0, 5);
+  // Recent payments from API or empty
+  const recentPayments = analytics?.recentPayments || [];
+
+  // Derived metrics for Key Metrics cards
+  const currentMonthRevenue = revenueData.length > 0 ? revenueData[revenueData.length - 1].revenue : 0;
+  const previousMonthRevenue = revenueData.length > 1 ? revenueData[revenueData.length - 2].revenue : 0;
+  const revenueChangeValue = previousMonthRevenue > 0 
+    ? ((currentMonthRevenue - previousMonthRevenue) / previousMonthRevenue * 100)
+    : (currentMonthRevenue > 0 ? 100 : 0);
+  
+  const revenueChange = `${revenueChangeValue > 0 ? '+' : ''}${revenueChangeValue.toFixed(1)}%`;
+  const isRevenuePositive = revenueChangeValue >= 0;
 
   // System health metrics
   const systemHealth = {
@@ -156,10 +158,10 @@ export function AdminDashboard({ user, onNavigate }: AdminDashboardProps) {
             className="grid grid-cols-2 md:grid-cols-4 gap-4"
           >
             {[
-              { label: 'Total Revenue', value: formatCurrency(mockAnalytics.totalRevenue), icon: DollarSign },
-              { label: 'Total Students', value: mockAnalytics.totalStudents.toLocaleString(), icon: Users },
-              { label: 'Active Courses', value: mockCourses.filter(c => c.isPublished).length, icon: BookOpen },
-              { label: 'Completion Rate', value: `${mockAnalytics.completionRate}%`, icon: Award },
+              { label: 'Total Revenue', value: formatCurrency(analytics?.totalRevenue || 0), icon: DollarSign },
+              { label: 'Total Students', value: new Intl.NumberFormat().format(analytics?.totalStudents || 0), icon: Users },
+              { label: 'Active Courses', value: (analytics?.activeCourses || 0), icon: BookOpen },
+              { label: 'Completion Rate', value: `${analytics?.completionRate || 0}%`, icon: Award },
             ].map((stat, index) => (
               <motion.div
                 key={index}
@@ -183,9 +185,9 @@ export function AdminDashboard({ user, onNavigate }: AdminDashboardProps) {
         {[
           {
             label: 'Monthly Revenue',
-            value: formatCurrency(2380000),
-            change: '+23.5%',
-            isPositive: true,
+            value: formatCurrency(currentMonthRevenue),
+            change: revenueChange,
+            isPositive: isRevenuePositive,
             icon: DollarSign,
             gradient: 'from-green-500 to-emerald-500',
             bgGradient: 'from-green-500/10 to-emerald-500/10',
@@ -193,13 +195,23 @@ export function AdminDashboard({ user, onNavigate }: AdminDashboardProps) {
           },
           {
             label: 'New Students',
-            value: '342',
-            change: '+15.3%',
+            value: analytics?.newStudentsCount || 0,
+            change: 'this month',
             isPositive: true,
             icon: UserPlus,
             gradient: 'from-blue-500 to-cyan-500',
             bgGradient: 'from-blue-500/10 to-cyan-500/10',
-            detail: 'this month'
+            detail: 'new registrations'
+          },
+          {
+            label: 'Pending Payments',
+            value: analytics?.pendingPaymentsCount || 0,
+            change: 'needs action',
+            isPositive: (analytics?.pendingPaymentsCount || 0) === 0,
+            icon: Clock,
+            gradient: 'from-orange-500 to-red-500',
+            bgGradient: 'from-orange-500/10 to-red-500/10',
+            detail: 'waiting for confirmation'
           },
           {
             label: 'Course Engagement',
@@ -210,16 +222,6 @@ export function AdminDashboard({ user, onNavigate }: AdminDashboardProps) {
             gradient: 'from-purple-500 to-pink-500',
             bgGradient: 'from-purple-500/10 to-pink-500/10',
             detail: 'active users'
-          },
-          {
-            label: 'Pending Payments',
-            value: '12',
-            change: '-5 from yesterday',
-            isPositive: true,
-            icon: Clock,
-            gradient: 'from-orange-500 to-red-500',
-            bgGradient: 'from-orange-500/10 to-red-500/10',
-            detail: 'needs attention'
           },
         ].map((stat, index) => (
           <motion.div
@@ -478,9 +480,6 @@ export function AdminDashboard({ user, onNavigate }: AdminDashboardProps) {
             </CardHeader>
             <CardContent className="space-y-3">
               {recentPayments.map((payment, index) => {
-                const course = mockCourses.find(c => c.id === payment.courseId);
-                const student = mockUsers.find(u => u.id === payment.studentId);
-                
                 return (
                   <motion.div
                     key={payment.id}
@@ -492,25 +491,25 @@ export function AdminDashboard({ user, onNavigate }: AdminDashboardProps) {
                     onClick={() => onNavigate('payments')}
                   >
                     <div className="flex items-center gap-3 flex-1 min-w-0">
-                      <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center flex-shrink-0">
-                        <CheckCircle className="w-5 h-5 text-white" />
+                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center text-white font-bold text-sm">
+                        {payment.studentName.charAt(0)}
                       </div>
                       <div className="min-w-0">
-                        <p className="font-semibold dark:text-white group-hover:text-green-600 dark:group-hover:text-green-400 transition-colors truncate">
-                          {student?.firstName} {student?.lastName}
+                        <p className="font-semibold text-gray-900 dark:text-white truncate">
+                          {payment.studentName}
                         </p>
-                        <p className="text-xs text-gray-600 dark:text-gray-400 truncate">
-                          {course?.title}
+                        <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                          {payment.courseTitle}
                         </p>
                       </div>
                     </div>
-                    <div className="text-right flex-shrink-0">
+                    <div className="text-right">
                       <p className="font-bold text-green-600 dark:text-green-400">
                         {formatCurrency(payment.amount)}
                       </p>
-                      <Badge variant="outline" className="text-xs bg-green-100 dark:bg-green-500/20 text-green-600 dark:text-green-400 border-green-200 dark:border-green-500/30">
-                        {payment.paymentMethod}
-                      </Badge>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        {formatDate(payment.date)}
+                      </p>
                     </div>
                   </motion.div>
                 );

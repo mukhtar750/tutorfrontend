@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import axios from 'axios';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -28,9 +29,10 @@ import {
   Sparkles
 } from 'lucide-react';
 import { motion } from 'motion/react';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 
 export function CreateCourse() {
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [courseData, setCourseData] = useState({
     title: '',
     description: '',
@@ -80,10 +82,49 @@ export function CreateCourse() {
     });
   };
 
-  const handlePublish = () => {
-    toast.success('Course published successfully!', {
-      description: 'Your course is now live and available to students',
-    });
+  const handlePublish = async () => {
+    if (!courseData.title || !courseData.category || modules.length === 0) {
+      toast.error('Please fill in required fields and add at least one module');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const token = localStorage.getItem('auth_token');
+      await axios.post('http://localhost:8000/api/courses', {
+        title: courseData.title,
+        description: courseData.description,
+        price: courseData.price,
+        thumbnail_url: courseData.thumbnail,
+        subject: courseData.category,
+        class_level: courseData.level,
+        lessons: modules
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      toast.success('Course published successfully!', {
+        description: 'Your course is now live and available to students',
+      });
+      
+      // Reset form
+      setCourseData({
+        title: '',
+        description: '',
+        category: '',
+        level: [],
+        price: '',
+        duration: '',
+        thumbnail: '',
+      });
+      setModules([]);
+
+    } catch (error) {
+      console.error('Failed to publish course', error);
+      toast.error('Failed to publish course');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (

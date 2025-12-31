@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import axios from 'axios';
+import { toast } from 'sonner';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -15,25 +17,175 @@ import {
   Archive
 } from 'lucide-react';
 import { motion } from 'motion/react';
+import { User } from '../../types';
 
-const mockConversations = [
-  { id: '1', student: 'Chioma Okafor', lastMessage: 'Thank you for the feedback on my assignment!', time: '10m ago', unread: 2, online: true },
-  { id: '2', student: 'Tunde Adeleke', lastMessage: 'Could you explain question 5 from the quiz?', time: '1h ago', unread: 1, online: true },
-  { id: '3', student: 'Ngozi Eze', lastMessage: 'When is the next live class?', time: '3h ago', unread: 0, online: false },
-  { id: '4', student: 'Ibrahim Musa', lastMessage: 'I submitted my assignment', time: '1d ago', unread: 0, online: false },
-];
+interface MessagesProps {
+  user: User;
+  initialStudentId?: string;
+}
 
-const mockMessages = [
-  { id: '1', sender: 'student', text: 'Good afternoon sir! I have a question about quadratic equations', time: '2:30 PM' },
-  { id: '2', sender: 'instructor', text: 'Good afternoon! Sure, what would you like to know?', time: '2:32 PM' },
-  { id: '3', sender: 'student', text: 'Could you explain how to find the roots when b² - 4ac is negative?', time: '2:35 PM' },
-  { id: '4', sender: 'instructor', text: 'That\'s a great question! When the discriminant (b² - 4ac) is negative, we have complex roots...', time: '2:38 PM' },
-];
+interface Message {
+  id: number;
+  sender_id: number;
+  receiver_id: number;
+  subject: string;
+  content: string;
+  is_read: boolean;
+  created_at: string;
+  sender: User;
+  receiver: User;
+}
 
-export function Messages() {
-  const [selectedConversation, setSelectedConversation] = useState(mockConversations[0]);
-  const [message, setMessage] = useState('');
+interface Conversation {
+  id: number;
+  name: string;
+  lastMessage: string;
+  time: string;
+  unread: number;
+  online: boolean;
+}
+
+export function Messages({ user, initialStudentId }: MessagesProps) {
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
+  const [currentMessages, setCurrentMessages] = useState<Message[]>([]);
+  const [messageText, setMessageText] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const fetchMessages = async () => {
+    try {
+      const token = localStorage.getItem('auth_token');
+      const response = await axios.get('http://localhost:8000/api/messages', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setMessages(response.data);
+      processConversations(response.data);
+    } catch (error) {
+      console.error('Failed to fetch messages', error);
+      toast.error('Failed to load messages');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchMessages();
+    const interval = setInterval(fetchMessages, 30000); // Poll every 30s
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    if (initialStudentId && conversations.length > 0 && !selectedConversation) {
+      const targetId = parseInt(initialStudentId);
+      const conv = conversations.find(c => c.id === targetId);
+      if (conv) {
+        setSelectedConversation(conv);
+      }
+    }
+  }, [initialStudentId, conversations]);
+
+  useEffect(() => {
+    if (selectedConversation) {
+      const userId = Number(user.id);
+      const conversationMessages = messages.filter(
+        m => (m.sender_id === userId && m.receiver_id === selectedConversation.id) ||
+             (m.sender_id === selectedConversation.id && m.receiver_id === userId)
+      ).sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+      
+      setCurrentMessages(conversationMessages);
+      scrollToBottom();
+      
+      // Mark as read
+      const unreadIds = conversationMessages
+        .filter(m => m.sender_id === selectedConversation.id && !m.is_read)
+        .map(m => m.id);
+        
+      if (unreadIds.length > 0) {
+        markAsRead(unreadIds[0]); 
+        unreadIds.forEach(id => markAsRead(id));
+      }
+    }
+  }, [selectedConversation, messages]);
+
+  const scrollToBottom = () => {
+    if (scrollRef.current) {
+      setTimeout(() => {
+        scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    }
+  };
+
+  const processConversations = (msgs: Message[]) => {
+    const userId = Number(user.id);
+    const convMap = new Map<number, Conversation>();
+
+    msgs.forEach(msg => {
+      const isMe = msg.sender_id === userId;
+      const otherUser = isMe ? msg.receiver : msg.sender;
+      const otherId = Number(otherUser.id);
+
+      if (!convMap.has(otherId)) {
+        convMap.set(otherId, {
+          id: otherId,
+          name: otherUser.name,
+          lastMessage: msg.content,
+          time: new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          unread: 0,
+          online: false
+        });
+      }
+
+      if (!isMe && !msg.is_read) {
+        const conv = convMap.get(otherId)!;
+        conv.unread += 1;
+      }
+    });
+
+    setConversations(Array.from(convMap.values()));
+    
+    // Select first conversation if none selected AND no initialStudentId
+    if (!selectedConversation && convMap.size > 0 && !initialStudentId) {
+      setSelectedConversation(convMap.values().next().value);
+    }
+  };
+
+  const markAsRead = async (id: number) => {
+    try {
+      const token = localStorage.getItem('auth_token');
+      await axios.put(`http://localhost:8000/api/messages/${id}/read`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+    } catch (error) {
+      console.error('Failed to mark message as read', error);
+    }
+  };
+
+  const handleSendMessage = async () => {
+    if (!messageText.trim() || !selectedConversation) return;
+
+    try {
+      const token = localStorage.getItem('auth_token');
+      const response = await axios.post('http://localhost:8000/api/messages', {
+        receiver_id: selectedConversation.id,
+        subject: 'Message', // Default subject
+        content: messageText
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      // Add new message to state immediately
+      const newMessage = response.data;
+      setMessages(prev => [newMessage, ...prev]);
+      setMessageText('');
+      scrollToBottom();
+    } catch (error) {
+      console.error('Failed to send message', error);
+      toast.error('Failed to send message');
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -66,7 +218,12 @@ export function Messages() {
               </div>
             </CardHeader>
             <CardContent className="space-y-2 max-h-[600px] overflow-y-auto">
-              {mockConversations.map((conv, index) => (
+              {conversations.length === 0 ? (
+                <div className="p-8 text-center text-gray-500 dark:text-gray-400">
+                  No conversations yet
+                </div>
+              ) : (
+                conversations.map((conv, index) => (
                 <motion.div
                   key={conv.id}
                   initial={{ opacity: 0, x: -20 }}
@@ -74,7 +231,7 @@ export function Messages() {
                   transition={{ delay: 0.1 * index }}
                   whileHover={{ scale: 1.02, x: 5 }}
                   className={`p-4 rounded-xl cursor-pointer transition-all ${
-                    selectedConversation.id === conv.id
+                    selectedConversation?.id === conv.id
                       ? 'bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-500/20 dark:to-purple-500/20 border-2 border-blue-200 dark:border-blue-500/50'
                       : 'bg-gray-50 dark:bg-white/5 hover:bg-gray-100 dark:hover:bg-white/10'
                   }`}
@@ -84,7 +241,7 @@ export function Messages() {
                     <div className="relative">
                       <Avatar>
                         <AvatarFallback className="bg-gradient-to-br from-blue-500 to-purple-600 text-white">
-                          {conv.student.split(' ').map(n => n[0]).join('')}
+                          {conv.name.split(' ').map(n => n[0]).join('')}
                         </AvatarFallback>
                       </Avatar>
                       {conv.online && (
@@ -93,7 +250,7 @@ export function Messages() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between mb-1">
-                        <p className="font-semibold dark:text-white truncate">{conv.student}</p>
+                        <p className="font-semibold dark:text-white truncate">{conv.name}</p>
                         <span className="text-xs text-gray-500 dark:text-gray-400">{conv.time}</span>
                       </div>
                       <p className="text-sm text-gray-600 dark:text-gray-400 truncate">{conv.lastMessage}</p>
@@ -105,7 +262,7 @@ export function Messages() {
                     )}
                   </div>
                 </motion.div>
-              ))}
+              )))}
             </CardContent>
           </Card>
         </motion.div>
@@ -117,86 +274,102 @@ export function Messages() {
           className="lg:col-span-2"
         >
           <Card className="bg-white dark:bg-gray-900/50 backdrop-blur-xl border-gray-200 dark:border-white/10 h-[700px] flex flex-col">
-            {/* Chat Header */}
-            <CardHeader className="border-b dark:border-white/10">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <Avatar className="w-12 h-12">
-                    <AvatarFallback className="bg-gradient-to-br from-blue-500 to-purple-600 text-white">
-                      {selectedConversation.student.split(' ').map(n => n[0]).join('')}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div>
-                    <p className="font-semibold dark:text-white">{selectedConversation.student}</p>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">
-                      {selectedConversation.online ? 'Online' : 'Offline'}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex gap-2">
-                  <Button variant="ghost" size="sm">
-                    <Star className="w-4 h-4" />
-                  </Button>
-                  <Button variant="ghost" size="sm">
-                    <Archive className="w-4 h-4" />
-                  </Button>
-                  <Button variant="ghost" size="sm">
-                    <MoreVertical className="w-4 h-4" />
-                  </Button>
-                </div>
-              </div>
-            </CardHeader>
-
-            {/* Messages */}
-            <CardContent className="flex-1 overflow-y-auto p-6 space-y-4">
-              {mockMessages.map((msg, index) => (
-                <motion.div
-                  key={msg.id}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.1 * index }}
-                  className={`flex ${msg.sender === 'instructor' ? 'justify-end' : 'justify-start'}`}
-                >
-                  <div className={`max-w-[70%] ${msg.sender === 'instructor' ? 'order-2' : 'order-1'}`}>
-                    <div
-                      className={`p-4 rounded-2xl ${
-                        msg.sender === 'instructor'
-                          ? 'bg-gradient-to-br from-blue-600 to-purple-600 text-white'
-                          : 'bg-gray-100 dark:bg-white/10 text-gray-900 dark:text-white'
-                      }`}
-                    >
-                      <p className="text-sm">{msg.text}</p>
+            {selectedConversation ? (
+              <>
+                {/* Chat Header */}
+                <CardHeader className="border-b dark:border-white/10">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <Avatar className="w-12 h-12">
+                        <AvatarFallback className="bg-gradient-to-br from-blue-500 to-purple-600 text-white">
+                          {selectedConversation.name.split(' ').map(n => n[0]).join('')}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div>
+                        <p className="font-semibold dark:text-white">{selectedConversation.name}</p>
+                        <p className="text-sm text-gray-500 dark:text-gray-400">
+                          {selectedConversation.online ? 'Online' : 'Offline'}
+                        </p>
+                      </div>
                     </div>
-                    <p className={`text-xs text-gray-500 dark:text-gray-400 mt-1 ${msg.sender === 'instructor' ? 'text-right' : 'text-left'}`}>
-                      {msg.time}
-                    </p>
+                    <div className="flex gap-2">
+                      <Button variant="ghost" size="sm">
+                        <Star className="w-4 h-4" />
+                      </Button>
+                      <Button variant="ghost" size="sm">
+                        <Archive className="w-4 h-4" />
+                      </Button>
+                      <Button variant="ghost" size="sm">
+                        <MoreVertical className="w-4 h-4" />
+                      </Button>
+                    </div>
                   </div>
-                </motion.div>
-              ))}
-            </CardContent>
+                </CardHeader>
 
-            {/* Message Input */}
-            <div className="p-4 border-t dark:border-white/10">
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" className="dark:border-white/10">
-                  <Paperclip className="w-4 h-4" />
-                </Button>
-                <Input
-                  placeholder="Type your message..."
-                  value={message}
-                  onChange={(e) => setMessage(e.target.value)}
-                  className="flex-1 dark:bg-white/5 dark:border-white/10"
-                  onKeyPress={(e) => {
-                    if (e.key === 'Enter') {
-                      setMessage('');
-                    }
-                  }}
-                />
-                <Button className="bg-gradient-to-r from-blue-600 to-purple-600">
-                  <Send className="w-4 h-4" />
-                </Button>
+                {/* Messages */}
+                <CardContent className="flex-1 overflow-y-auto p-6 space-y-4">
+                  {currentMessages.map((msg, index) => {
+                    const isMe = msg.sender_id === Number(user.id);
+                    return (
+                      <motion.div
+                        key={msg.id}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.1 * index }}
+                        className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}
+                      >
+                        <div className={`max-w-[70%] ${isMe ? 'order-2' : 'order-1'}`}>
+                          <div
+                            className={`p-4 rounded-2xl ${
+                              isMe
+                                ? 'bg-gradient-to-br from-blue-600 to-purple-600 text-white'
+                                : 'bg-gray-100 dark:bg-white/10 text-gray-900 dark:text-white'
+                            }`}
+                          >
+                            <p className="text-sm">{msg.content}</p>
+                          </div>
+                          <p className={`text-xs text-gray-500 dark:text-gray-400 mt-1 ${isMe ? 'text-right' : 'text-left'}`}>
+                            {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </p>
+                        </div>
+                      </motion.div>
+                    );
+                  })}
+                  <div ref={scrollRef} />
+                </CardContent>
+
+                {/* Message Input */}
+                <div className="p-4 border-t dark:border-white/10">
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm" className="dark:border-white/10">
+                      <Paperclip className="w-4 h-4" />
+                    </Button>
+                    <Input
+                      placeholder="Type your message..."
+                      value={messageText}
+                      onChange={(e) => setMessageText(e.target.value)}
+                      className="flex-1 dark:bg-white/5 dark:border-white/10"
+                      onKeyPress={(e) => {
+                        if (e.key === 'Enter') {
+                          handleSendMessage();
+                        }
+                      }}
+                    />
+                    <Button 
+                      className="bg-gradient-to-r from-blue-600 to-purple-600"
+                      onClick={handleSendMessage}
+                    >
+                      <Send className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="flex flex-col items-center justify-center h-full text-gray-500 dark:text-gray-400">
+                <MessageSquare className="w-12 h-12 mb-4 opacity-50" />
+                <p>Select a conversation to start messaging</p>
               </div>
-            </div>
+            )}
           </Card>
         </motion.div>
       </div>

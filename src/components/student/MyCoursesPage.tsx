@@ -13,6 +13,8 @@ import {
   Star
 } from 'lucide-react';
 import { getEnrolledCourses } from '../../lib/mockData';
+import { useEffect, useState } from 'react';
+import axios from 'axios';
 import { formatCurrency } from '../../lib/utils';
 
 interface MyCoursesPageProps {
@@ -21,7 +23,39 @@ interface MyCoursesPageProps {
 }
 
 export function MyCoursesPage({ userId, onNavigate }: MyCoursesPageProps) {
-  const enrolledCourses = getEnrolledCourses(userId);
+  const [enrolledCourses, setEnrolledCourses] = useState(getEnrolledCourses(userId));
+
+  useEffect(() => {
+    const token = localStorage.getItem('auth_token');
+    if (!token) return;
+    axios.get('http://localhost:8000/api/my-enrollments', {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then(res => {
+      const data = res.data as any[];
+      const mapped = data.map((e: any) => ({
+        id: String(e.course.id),
+        title: e.course.title,
+        description: e.course.description || '',
+        thumbnail: e.course.thumbnail_url || 'https://images.unsplash.com/photo-1635070041078-e363dbe005cb?w=800&q=80',
+        instructorId: String(e.course.instructor_id || 'instructor-1'),
+        instructorName: e.course.instructor?.name || 'Instructor',
+        price: Number(e.course.price || 0),
+        currency: 'NGN',
+        category: e.course.subject || 'General',
+        level: [e.course.class_level || 'SS1'] as any,
+        duration: '10h',
+        enrollmentCount: 0,
+        rating: 4.7,
+        isPublished: e.course.status === 'published',
+        createdAt: e.course.created_at,
+        updatedAt: e.course.updated_at,
+        enrollment: { progress: 0 },
+      }));
+      setEnrolledCourses(mapped);
+    }).catch(() => {
+      setEnrolledCourses(getEnrolledCourses(userId));
+    });
+  }, [userId]);
 
   return (
     <div className="space-y-6">
@@ -110,7 +144,10 @@ export function MyCoursesPage({ userId, onNavigate }: MyCoursesPageProps) {
                   </div>
                 </div>
 
-                <Button className="w-full">
+                <Button 
+                  className="w-full"
+                  onClick={() => onNavigate('course-player', course.id)}
+                >
                   <Play className="w-4 h-4 mr-2" />
                   Continue Learning
                 </Button>

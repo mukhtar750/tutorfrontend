@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { toast } from 'sonner@2.0.3';
+import axios from 'axios';
 
 interface HeroContent {
   headline: string;
@@ -52,25 +53,68 @@ export function HeroEditor() {
   const [content, setContent] = useState<HeroContent>(defaultContent);
   const [showPreview, setShowPreview] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const handleSave = () => {
+  useEffect(() => {
+    fetchHeroContent();
+  }, []);
+
+  const fetchHeroContent = async () => {
+    try {
+      setIsLoading(true);
+      const response = await axios.get('http://localhost:8000/api/settings/hero');
+      if (response.data) {
+        // Ensure stats object exists and merge with defaults
+        const fetchedData = response.data;
+        setContent({
+          ...defaultContent,
+          ...fetchedData,
+          stats: {
+            ...defaultContent.stats,
+            ...(fetchedData.stats || {})
+          }
+        });
+      }
+    } catch (error) {
+      console.error('Failed to fetch hero content', error);
+      // Fallback to default content if fetch fails or no content
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSave = async () => {
     setIsSaving(true);
     
-    // Simulate save
-    setTimeout(() => {
-      setIsSaving(false);
+    try {
+      const token = localStorage.getItem('auth_token');
+      await axios.post('http://localhost:8000/api/admin/settings/hero', content, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
       toast.success('Hero Content Saved!', {
         description: 'Landing page has been updated successfully',
       });
-    }, 1500);
+    } catch (error) {
+      console.error('Failed to save hero content', error);
+      toast.error('Failed to save content', {
+        description: 'Please try again later',
+      });
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleReset = () => {
     setContent(defaultContent);
     toast.info('Content Reset', {
-      description: 'Hero content has been reset to defaults',
+      description: 'Hero content has been reset to defaults. Click save to apply.',
     });
   };
+
+  if (isLoading) {
+    return <div className="p-8 text-center">Loading editor...</div>;
+  }
 
   return (
     <div className="space-y-6">

@@ -1,3 +1,5 @@
+import { useState, useEffect } from 'react';
+import axios from 'axios';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { 
   BarChart3,
@@ -25,31 +27,54 @@ import {
   ResponsiveContainer,
   Legend,
 } from 'recharts';
+import { toast } from 'sonner';
+import { formatCurrency } from '../../lib/utils';
 
-const enrollmentData = [
-  { month: 'Jan', students: 25, revenue: 375000 },
-  { month: 'Feb', students: 38, revenue: 570000 },
-  { month: 'Mar', students: 52, revenue: 780000 },
-  { month: 'Apr', students: 67, revenue: 1005000 },
-  { month: 'May', students: 85, revenue: 1275000 },
-  { month: 'Jun', students: 95, revenue: 1425000 },
-];
-
-const courseEngagement = [
-  { name: 'Videos Watched', value: 78 },
-  { name: 'Assignments Done', value: 65 },
-  { name: 'Live Classes', value: 92 },
-  { name: 'Forum Activity', value: 45 },
-];
-
-const performanceData = [
-  { name: 'Excellent', value: 35, color: '#10b981' },
-  { name: 'Good', value: 45, color: '#3b82f6' },
-  { name: 'Average', value: 15, color: '#f59e0b' },
-  { name: 'Poor', value: 5, color: '#ef4444' },
-];
+interface AnalyticsData {
+  stats: {
+    total_revenue: number;
+    active_students: number;
+    avg_rating: number;
+    course_hours: number;
+  };
+  enrollment_data: any[];
+  performance_data: any[];
+  course_engagement: any[];
+}
 
 export function InstructorAnalytics() {
+  const [data, setData] = useState<AnalyticsData | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchAnalytics = async () => {
+      try {
+        const token = localStorage.getItem('auth_token');
+        const response = await axios.get('http://localhost:8000/api/instructor/analytics', {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        setData(response.data);
+      } catch (error) {
+        console.error('Failed to fetch analytics', error);
+        toast.error('Failed to load analytics data');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchAnalytics();
+  }, []);
+
+  if (isLoading) {
+    return <div className="flex justify-center items-center h-96">Loading analytics...</div>;
+  }
+
+  if (!data) {
+    return <div className="text-center py-12">Failed to load analytics data.</div>;
+  }
+
+  const { stats, enrollment_data, performance_data, course_engagement } = data;
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -64,10 +89,34 @@ export function InstructorAnalytics() {
       {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         {[
-          { label: 'Total Revenue', value: '₦1.4M', icon: DollarSign, gradient: 'from-green-500 to-emerald-500', change: '+23%' },
-          { label: 'Active Students', value: '142', icon: Users, gradient: 'from-blue-500 to-cyan-500', change: '+12%' },
-          { label: 'Avg. Rating', value: '4.8', icon: Star, gradient: 'from-yellow-500 to-orange-500', change: '+0.3' },
-          { label: 'Course Hours', value: '48h', icon: Clock, gradient: 'from-purple-500 to-pink-500', change: '+8h' },
+          { 
+            label: 'Total Revenue', 
+            value: formatCurrency(stats.total_revenue), 
+            icon: DollarSign, 
+            gradient: 'from-green-500 to-emerald-500', 
+            change: '+23%' // Mock trend for now
+          },
+          { 
+            label: 'Active Students', 
+            value: stats.active_students, 
+            icon: Users, 
+            gradient: 'from-blue-500 to-cyan-500', 
+            change: '+12%' // Mock trend
+          },
+          { 
+            label: 'Avg. Rating', 
+            value: stats.avg_rating, 
+            icon: Star, 
+            gradient: 'from-yellow-500 to-orange-500', 
+            change: '+0.3' // Mock trend
+          },
+          { 
+            label: 'Course Hours', 
+            value: stats.course_hours + 'h', 
+            icon: Clock, 
+            gradient: 'from-purple-500 to-pink-500', 
+            change: '+8h' // Mock trend
+          },
         ].map((stat, index) => (
           <motion.div
             key={index}
@@ -103,7 +152,7 @@ export function InstructorAnalytics() {
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={enrollmentData}>
+                <LineChart data={enrollment_data}>
                   <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-white/10" />
                   <XAxis dataKey="month" />
                   <YAxis yAxisId="left" />
@@ -131,7 +180,7 @@ export function InstructorAnalytics() {
               <ResponsiveContainer width="100%" height={300}>
                 <PieChart>
                   <Pie
-                    data={performanceData}
+                    data={performance_data}
                     cx="50%"
                     cy="50%"
                     labelLine={false}
@@ -140,7 +189,7 @@ export function InstructorAnalytics() {
                     fill="#8884d8"
                     dataKey="value"
                   >
-                    {performanceData.map((entry, index) => (
+                    {performance_data.map((entry: any, index: number) => (
                       <Cell key={`cell-${index}`} fill={entry.color} />
                     ))}
                   </Pie>
@@ -163,7 +212,7 @@ export function InstructorAnalytics() {
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={courseEngagement}>
+                <BarChart data={course_engagement}>
                   <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-white/10" />
                   <XAxis dataKey="name" />
                   <YAxis />

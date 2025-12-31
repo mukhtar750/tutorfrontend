@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
@@ -14,6 +14,7 @@ import {
   Download
 } from 'lucide-react';
 import { mockAssignments, mockCourses, mockEnrollments } from '../../lib/mockData';
+import axios from 'axios';
 import { formatDateTime, getDaysUntil, isOverdue } from '../../lib/utils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
 import {
@@ -25,6 +26,10 @@ import {
 } from '../ui/dialog';
 import { Label } from '../ui/label';
 
+import { Input } from '../ui/input';
+
+import { toast } from 'sonner';
+
 interface AssignmentsPageProps {
   userId: string;
 }
@@ -33,29 +38,87 @@ export function AssignmentsPage({ userId }: AssignmentsPageProps) {
   const [selectedAssignment, setSelectedAssignment] = useState<any>(null);
   const [showSubmitDialog, setShowSubmitDialog] = useState(false);
   const [submissionText, setSubmissionText] = useState('');
+  const [attachmentUrl, setAttachmentUrl] = useState('');
+  const [assignments, setAssignments] = useState<any[]>([]);
 
-  const enrolledCourseIds = mockEnrollments
-    .filter(e => e.studentId === userId)
-    .map(e => e.courseId);
+  useEffect(() => {
+    const token = localStorage.getItem('auth_token');
+    if (!token) {
+      const enrolledCourseIds = mockEnrollments
+        .filter(e => e.studentId === userId)
+        .map(e => e.courseId);
+      const userAssignments = mockAssignments.filter(a => enrolledCourseIds.includes(a.courseId));
+      setAssignments(userAssignments);
+      return;
+    }
 
-  const userAssignments = mockAssignments.filter(a => 
-    enrolledCourseIds.includes(a.courseId)
-  );
+    axios.get('http://localhost:8000/api/my-assignments', {
+      headers: { Authorization: `Bearer ${token}` }
+    }).then(res => {
+      const apiAssignments = (res.data || []).map((a: any) => ({
+        id: a.id,
+        courseId: a.course_id ?? a.course?.id,
+        course: a.course,
+        title: a.title,
+        description: a.description,
+        dueDate: a.due_date,
+        totalPoints: a.total_points ?? a.totalPoints,
+        submission: a.submissions && a.submissions.length > 0 ? a.submissions[0] : null
+      }));
+      setAssignments(apiAssignments);
+    }).catch((error) => {
+      console.error('Failed to fetch assignments', error);
+      toast.error('Failed to load assignments');
+      // Fallback to mock data if API fails completely
+      const enrolledCourseIds = mockEnrollments
+        .filter(e => e.studentId === userId)
+        .map(e => e.courseId);
+      const userAssignments = mockAssignments.filter(a => enrolledCourseIds.includes(a.courseId));
+      setAssignments(userAssignments);
+    });
+  }, [userId]);
 
-  const pendingAssignments = userAssignments.filter(a => {
+  const pendingAssignments = assignments.filter(a => {
     const daysUntil = getDaysUntil(a.dueDate);
-    return daysUntil >= 0;
+    return daysUntil >= 0 && !a.submission;
   });
 
-  const overdueAssignments = userAssignments.filter(a => isOverdue(a.dueDate));
-  const completedAssignments = 0; // Mock - would come from submissions
+  const overdueAssignments = assignments.filter(a => isOverdue(a.dueDate) && !a.submission);
+  const completedAssignments = assignments.filter(a => a.submission);
 
-  const handleSubmit = () => {
-    console.log('Submitting assignment:', selectedAssignment.id);
-    console.log('Submission:', submissionText);
-    alert('Assignment submitted successfully!');
-    setShowSubmitDialog(false);
-    setSubmissionText('');
+  const handleSubmit = async () => {
+    if (!selectedAssignment) return;
+    const token = localStorage.getItem('auth_token');
+    if (!token) {
+      toast.error('Please log in to submit assignments');
+      return;
+    }
+    
+    try {
+      await axios.post(`http://localhost:8000/api/assignments/${selectedAssignment.id}/submit`, {
+        content: submissionText,
+        attachment_url: attachmentUrl,
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      toast.success('Assignment submitted successfully!');
+      setShowSubmitDialog(false);
+      setSubmissionText('');
+      setAttachmentUrl('');
+      
+      // Refresh assignments
+      // For now, optimistically update local state
+      setAssignments(prev => prev.map(a => {
+        if (a.id === selectedAssignment.id) {
+          return { ...a, submission: { status: 'submitted', submitted_at: new Date().toISOString() } };
+        }
+        return a;
+      }));
+      
+    } catch (error) {
+      console.error('Submission failed', error);
+      toast.error('Failed to submit assignment');
+    }
   };
 
   return (
@@ -72,7 +135,7 @@ export function AssignmentsPage({ userId }: AssignmentsPageProps) {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Total</p>
-                <p className="text-2xl mt-2">{userAssignments.length}</p>
+                <p className="text-2xl mt-2">{assignments.length}</p>
               </div>
               <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
                 <FileText className="w-6 h-6 text-blue-600" />
@@ -114,7 +177,7 @@ export function AssignmentsPage({ userId }: AssignmentsPageProps) {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Completed</p>
-                <p className="text-2xl mt-2">{completedAssignments}</p>
+                <p className="text-2xl mt-2">{completedAssignments.length}</p>
               </div>
               <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
                 <CheckCircle className="w-6 h-6 text-green-600" />
@@ -139,7 +202,7 @@ export function AssignmentsPage({ userId }: AssignmentsPageProps) {
                 Overdue ({overdueAssignments.length})
               </TabsTrigger>
               <TabsTrigger value="completed">
-                Completed ({completedAssignments})
+                Completed ({completedAssignments.length})
               </TabsTrigger>
             </TabsList>
 
@@ -183,9 +246,19 @@ export function AssignmentsPage({ userId }: AssignmentsPageProps) {
             </TabsContent>
 
             <TabsContent value="completed" className="space-y-4 mt-4">
-              <div className="text-center py-8 text-muted-foreground">
-                No completed assignments yet
-              </div>
+              {completedAssignments.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  No completed assignments yet
+                </div>
+              ) : (
+                completedAssignments.map(assignment => (
+                  <AssignmentCard 
+                    key={assignment.id} 
+                    assignment={assignment}
+                    onSubmit={() => {}}
+                  />
+                ))
+              )}
             </TabsContent>
           </Tabs>
         </CardContent>
@@ -208,7 +281,7 @@ export function AssignmentsPage({ userId }: AssignmentsPageProps) {
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-muted-foreground">Course</span>
                     <span className="text-sm">
-                      {mockCourses.find(c => c.id === selectedAssignment?.courseId)?.title}
+                      {selectedAssignment?.course?.title ?? mockCourses.find(c => c.id === selectedAssignment?.courseId)?.title}
                     </span>
                   </div>
                   <div className="flex items-center justify-between">
@@ -236,19 +309,15 @@ export function AssignmentsPage({ userId }: AssignmentsPageProps) {
             </div>
 
             <div className="space-y-2">
-              <Label>Attachments (Optional)</Label>
-              <div className="border-2 border-dashed rounded-lg p-8 text-center">
-                <Upload className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
-                <p className="text-sm text-muted-foreground">
-                  Click to upload or drag and drop
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  PDF, DOC, DOCX up to 10MB
-                </p>
-                <Button variant="outline" size="sm" className="mt-3">
-                  Choose File
-                </Button>
-              </div>
+              <Label>Attachment URL (Optional)</Label>
+              <Input
+                placeholder="https://docs.google.com/..."
+                value={attachmentUrl}
+                onChange={(e) => setAttachmentUrl(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Paste a link to your assignment (Google Doc, GitHub, etc.)
+              </p>
             </div>
 
             <div className="flex justify-end gap-3">
@@ -275,29 +344,36 @@ function AssignmentCard({
   isOverdue?: boolean;
   onSubmit: () => void;
 }) {
-  const course = mockCourses.find(c => c.id === assignment.courseId);
+  const courseName = assignment.course?.title ?? mockCourses.find(c => c.id === assignment.courseId)?.title;
   const daysUntil = getDaysUntil(assignment.dueDate);
+  const isSubmitted = !!assignment.submission;
 
   return (
-    <div className={`p-4 border rounded-lg ${isOverdue ? 'border-red-200 bg-red-50' : ''}`}>
+    <div className={`p-4 border rounded-lg ${isOverdue ? 'border-red-200 bg-red-50' : ''} ${isSubmitted ? 'bg-green-50 border-green-200' : ''}`}>
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-start gap-4 flex-1">
           <div className={`w-12 h-12 rounded-lg flex items-center justify-center flex-shrink-0 ${
-            isOverdue ? 'bg-red-100' : 'bg-blue-100'
+            isOverdue ? 'bg-red-100' : isSubmitted ? 'bg-green-100' : 'bg-blue-100'
           }`}>
-            <FileText className={`w-6 h-6 ${isOverdue ? 'text-red-600' : 'text-blue-600'}`} />
+            <FileText className={`w-6 h-6 ${isOverdue ? 'text-red-600' : isSubmitted ? 'text-green-600' : 'text-blue-600'}`} />
           </div>
           
           <div className="flex-1">
             <div className="flex items-start justify-between gap-4 mb-2">
               <div>
                 <h3 className="font-medium">{assignment.title}</h3>
-                <p className="text-sm text-muted-foreground">{course?.title}</p>
+                <p className="text-sm text-muted-foreground">{courseName}</p>
               </div>
-              {isOverdue && (
+              {isOverdue && !isSubmitted && (
                 <Badge variant="destructive" className="flex items-center gap-1">
                   <AlertCircle className="w-3 h-3" />
                   Overdue
+                </Badge>
+              )}
+              {isSubmitted && (
+                <Badge variant="default" className="bg-green-600 hover:bg-green-700 flex items-center gap-1">
+                  <CheckCircle className="w-3 h-3" />
+                  Submitted
                 </Badge>
               )}
             </div>
@@ -315,7 +391,7 @@ function AssignmentCard({
                 <Award className="w-4 h-4" />
                 <span>{assignment.totalPoints} points</span>
               </div>
-              {!isOverdue && daysUntil <= 3 && (
+              {!isOverdue && !isSubmitted && daysUntil <= 3 && (
                 <Badge variant="secondary">
                   {daysUntil === 0 ? 'Due today' : `${daysUntil} days left`}
                 </Badge>
@@ -333,8 +409,8 @@ function AssignmentCard({
           </div>
         </div>
 
-        <Button onClick={onSubmit}>
-          Submit
+        <Button onClick={onSubmit} disabled={isSubmitted || isOverdue} variant={isSubmitted ? "secondary" : "default"}>
+          {isSubmitted ? 'Submitted' : 'Submit'}
         </Button>
       </div>
     </div>
